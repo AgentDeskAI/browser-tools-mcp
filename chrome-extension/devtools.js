@@ -25,50 +25,10 @@ chrome.storage.local.get(["browserConnectorSettings"], (result) => {
   }
 });
 
-// Listen for settings updates and screenshot capture requests
+// Listen for settings updates
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "SETTINGS_UPDATED") {
     settings = message.settings;
-  } else if (message.type === "CAPTURE_SCREENSHOT") {
-    // Capture screenshot of the current tab
-    chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-      if (chrome.runtime.lastError) {
-        console.error("Screenshot capture failed:", chrome.runtime.lastError);
-        sendResponse({
-          success: false,
-          error: chrome.runtime.lastError.message,
-        });
-        return;
-      }
-
-      // Send screenshot data to browser connector via HTTP POST
-      fetch("http://127.0.0.1:3025/screenshot", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          data: dataUrl,
-          path: settings.screenshotPath,
-        }),
-      })
-        .then((response) => response.json())
-        .then((result) => {
-          if (result.error) {
-            sendResponse({ success: false, error: result.error });
-          } else {
-            sendResponse({ success: true, path: result.path });
-          }
-        })
-        .catch((error) => {
-          console.error("Failed to save screenshot:", error);
-          sendResponse({
-            success: false,
-            error: error.message || "Failed to save screenshot",
-          });
-        });
-    });
-    return true; // Required to use sendResponse asynchronously
   }
 });
 
@@ -475,7 +435,7 @@ function captureAndSendElement() {
       if (!el) return null;
 
       const rect = el.getBoundingClientRect();
-      
+
       return {
         tagName: el.tagName,
         id: el.id,

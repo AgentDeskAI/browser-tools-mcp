@@ -102,12 +102,17 @@ screenshotPathInput.addEventListener("change", (e) => {
   saveSettings();
 });
 
-// Add screenshot capture functionality
+// Update screenshot capture functionality
 captureScreenshotButton.addEventListener("click", () => {
   captureScreenshotButton.textContent = "Capturing...";
 
-  // Send message to devtools.js to capture screenshot
-  chrome.runtime.sendMessage({ type: "CAPTURE_SCREENSHOT" }, (response) => {
+  // Send message to background script to capture screenshot
+  chrome.runtime.sendMessage({
+    type: "CAPTURE_SCREENSHOT",
+    tabId: chrome.devtools.inspectedWindow.tabId,
+    screenshotPath: settings.screenshotPath
+  }, (response) => {
+    console.log("Screenshot capture response:", response);
     if (!response) {
       captureScreenshotButton.textContent = "Failed to capture!";
       console.error("Screenshot capture failed: No response received");
@@ -115,7 +120,8 @@ captureScreenshotButton.addEventListener("click", () => {
       captureScreenshotButton.textContent = "Failed to capture!";
       console.error("Screenshot capture failed:", response.error);
     } else {
-      captureScreenshotButton.textContent = "Screenshot captured!";
+      captureScreenshotButton.textContent = `Captured: ${response.title}`;
+      console.log("Screenshot captured successfully:", response.path);
     }
     setTimeout(() => {
       captureScreenshotButton.textContent = "Capture Screenshot";
