@@ -1,6 +1,6 @@
 {
     "name": "BrowserTools MCP",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "MCP tool for AI code editors to capture data from a browser such as console logs, network requests, screenshots and more",
     "manifest_version": 3,
     "devtools_page": "devtools.html",

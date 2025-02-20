@@ -380,14 +380,14 @@ function performAttach() {
 
     chrome.debugger.sendCommand(
       { tabId: currentTabId },
-      "Console.enable",
+      "Runtime.enable",
       {},
       () => {
         if (chrome.runtime.lastError) {
-          console.error("Failed to enable console:", chrome.runtime.lastError);
+          console.error("Failed to enable runtime:", chrome.runtime.lastError);
           return;
         }
-        console.log("Console API successfully enabled");
+        console.log("Runtime API successfully enabled");
       }
     );
   });
@@ -430,12 +430,22 @@ const consoleMessageListener = (source, method, params) => {
     return;
   }
 
-  if (method === "Console.messageAdded") {
-    console.log("Console message received:", params.message);
+  if (method === "Runtime.exceptionThrown") {
     const entry = {
-      type: params.message.level === "error" ? "console-error" : "console-log",
-      level: params.message.level,
-      message: params.message.text,
+      type: "console-error",
+      message: params.exceptionDetails.exception?.description || JSON.stringify(params.exceptionDetails),
+      level: "error",
+      timestamp: Date.now(),
+    };
+    console.log("Sending runtime exception:", entry);
+    sendToBrowserConnector(entry);
+  }
+
+  if (method === "Runtime.consoleAPICalled") {
+    const entry = {
+      type: params.type === "error" ? "console-error" : "console-log",
+      level: params.type,
+      message: params.args[0].value,
       timestamp: Date.now(),
     };
     console.log("Sending console entry:", entry);
