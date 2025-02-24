@@ -50,7 +50,8 @@ interface ScreenshotCallback {
 const screenshotCallbacks = new Map<string, ScreenshotCallback>();
 
 const app = express();
-const PORT = 3025;
+// Allow port configuration via environment variable
+const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : 3025;
 
 app.use(cors());
 // Increase JSON body parser limit to 50MB to handle large screenshots

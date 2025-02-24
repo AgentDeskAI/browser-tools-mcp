@@ -11,6 +11,12 @@ let settings = {
   screenshotPath: "", // Add new setting for screenshot path
 };
 
+// Default port
+let serverPort = 3025;
+let ws = null;
+let wsReconnectTimeout = null;
+const WS_RECONNECT_DELAY = 5000; // 5 seconds
+
 // Keep track of debugger state
 let isDebuggerAttached = false;
 let attachDebuggerRetries = 0;
@@ -18,10 +24,120 @@ const currentTabId = chrome.devtools.inspectedWindow.tabId;
 const MAX_ATTACH_RETRIES = 3;
 const ATTACH_RETRY_DELAY = 1000; // 1 second
 
+// Listen for port updates from the panel
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "PORT_UPDATED") {
+    console.log(`Updating port to ${message.port}`);
+    serverPort = message.port;
+    // Reconnect WebSocket with new port
+    if (ws) {
+      ws.close();
+    }
+    setupWebSocket();
+  }
+});
+
+// Function to get server port
+async function getServerPort() {
+  try {
+    const result = await new Promise(resolve => 
+      chrome.storage.local.get(['lastKnownPort'], resolve)
+    );
+    if (result.lastKnownPort) {
+      const port = result.lastKnownPort;
+      console.log(`Trying saved port: ${port}`);
+      const response = await fetch(`http://127.0.0.1:${port}/.port`);
+      if (response.ok) {
+        const confirmedPort = await response.text();
+        serverPort = parseInt(confirmedPort, 10);
+        console.log(`Successfully connected to port: ${serverPort}`);
+        return true;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to connect to saved port:', error);
+  }
+  return false;
+}
+
+// WebSocket setup function
+function setupWebSocket() {
+  if (ws) {
+    ws.close();
+  }
+
+  console.log(`Setting up WebSocket connection on port ${serverPort}`);
+  ws = new WebSocket(`ws://localhost:${serverPort}/extension-ws`);
+
+  ws.onopen = () => {
+    console.log("Chrome Extension: WebSocket connected");
+    if (wsReconnectTimeout) {
+      clearTimeout(wsReconnectTimeout);
+      wsReconnectTimeout = null;
+    }
+  };
+
+  ws.onclose = () => {
+    console.log("Chrome Extension: WebSocket disconnected, attempting to reconnect...");
+    if (!wsReconnectTimeout) {
+      wsReconnectTimeout = setTimeout(setupWebSocket, WS_RECONNECT_DELAY);
+    }
+  };
+
+  ws.onerror = (error) => {
+    console.error("Chrome Extension: WebSocket error:", error);
+  };
+
+  ws.onmessage = async (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      console.log("Chrome Extension: Received WebSocket message:", message);
+
+      if (message.type === "take-screenshot") {
+        console.log("Chrome Extension: Taking screenshot...");
+        chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+          if (chrome.runtime.lastError) {
+            console.error("Chrome Extension: Screenshot capture failed:", chrome.runtime.lastError);
+            ws.send(JSON.stringify({
+              type: "screenshot-error",
+              error: chrome.runtime.lastError.message,
+              requestId: message.requestId,
+            }));
+            return;
+          }
+
+          console.log("Chrome Extension: Screenshot captured successfully");
+          const response = {
+            type: "screenshot-data",
+            data: dataUrl,
+            requestId: message.requestId,
+            ...(settings.screenshotPath && { path: settings.screenshotPath }),
+          };
+
+          console.log("Chrome Extension: Sending screenshot data response", {
+            ...response,
+            data: "[base64 data]",
+          });
+
+          ws.send(JSON.stringify(response));
+        });
+      }
+    } catch (error) {
+      console.error("Chrome Extension: Error processing WebSocket message:", error);
+    }
+  };
+}
+
 // Load saved settings on startup
-chrome.storage.local.get(["browserConnectorSettings"], (result) => {
+chrome.storage.local.get(["browserConnectorSettings"], async (result) => {
   if (result.browserConnectorSettings) {
     settings = { ...settings, ...result.browserConnectorSettings };
+  }
+  // Get server port before setting up WebSocket
+  if (await getServerPort()) {
+    setupWebSocket();
+  } else {
+    console.error('Failed to connect to server. Please configure the port in the extension panel.');
   }
 });
 
@@ -42,7 +158,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       // Send screenshot data to browser connector via HTTP POST
-      fetch("http://127.0.0.1:3025/screenshot", {
+      fetch(`http://127.0.0.1:${serverPort}/screenshot`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -212,99 +328,23 @@ function sendToBrowserConnector(logData) {
     timestamp: logData.timestamp,
   });
 
-  // Process any string fields that might contain JSON
-  const processedData = { ...logData };
-
-  if (logData.type === "network-request") {
-    console.log("Processing network request");
-    if (processedData.requestBody) {
-      console.log(
-        "Request body size before:",
-        processedData.requestBody.length
-      );
-      processedData.requestBody = processJsonString(
-        processedData.requestBody,
-        settings.stringSizeLimit
-      );
-      console.log("Request body size after:", processedData.requestBody.length);
-    }
-    if (processedData.responseBody) {
-      console.log(
-        "Response body size before:",
-        processedData.responseBody.length
-      );
-      processedData.responseBody = processJsonString(
-        processedData.responseBody,
-        settings.stringSizeLimit
-      );
-      console.log(
-        "Response body size after:",
-        processedData.responseBody.length
-      );
-    }
-  } else if (
-    logData.type === "console-log" ||
-    logData.type === "console-error"
-  ) {
-    console.log("Processing console message");
-    if (processedData.message) {
-      console.log("Message size before:", processedData.message.length);
-      processedData.message = processJsonString(
-        processedData.message,
-        settings.stringSizeLimit
-      );
-      console.log("Message size after:", processedData.message.length);
-    }
-  }
-
-  // Add settings to the request
-  const payload = {
-    data: {
-      ...processedData,
-      timestamp: Date.now(),
-    },
-    settings: {
-      logLimit: settings.logLimit,
-      queryLimit: settings.queryLimit,
-      showRequestHeaders: settings.showRequestHeaders,
-      showResponseHeaders: settings.showResponseHeaders,
-    },
-  };
-
-  const finalPayloadSize = JSON.stringify(payload).length;
-  console.log("Final payload size:", finalPayloadSize);
-
-  if (finalPayloadSize > 1000000) {
-    console.warn("Warning: Large payload detected:", finalPayloadSize);
-    console.warn(
-      "Payload preview:",
-      JSON.stringify(payload).substring(0, 1000) + "..."
-    );
-  }
-
-  fetch("http://127.0.0.1:3025/extension-log", {
+  fetch(`http://127.0.0.1:${serverPort}/extension-log`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      console.log("Successfully sent log to browser-connector");
-      return response.json();
-    })
-    .then((data) => {
-      console.log("Browser connector response:", data);
-    })
-    .catch((error) => {
-      console.error("Failed to send log to browser-connector:", error);
-    });
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      data: logData,
+      settings: settings,
+    }),
+  }).catch((error) => {
+    console.error("Failed to send log to browser connector:", error);
+  });
 }
 
 // Add function to wipe logs
 function wipeLogs() {
-  fetch("http://127.0.0.1:3025/wipelogs", {
+  fetch(`http://127.0.0.1:${serverPort}/wipelogs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   }).catch((error) => {
@@ -512,99 +552,4 @@ function captureAndSendElement() {
 // Listen for element selection in the Elements panel
 chrome.devtools.panels.elements.onSelectionChanged.addListener(() => {
   captureAndSendElement();
-});
-
-// WebSocket connection management
-let ws = null;
-let wsReconnectTimeout = null;
-const WS_RECONNECT_DELAY = 5000; // 5 seconds
-
-function setupWebSocket() {
-  if (ws) {
-    ws.close();
-  }
-
-  ws = new WebSocket("ws://localhost:3025/extension-ws");
-
-  ws.onmessage = async (event) => {
-    try {
-      const message = JSON.parse(event.data);
-      console.log("Chrome Extension: Received WebSocket message:", message);
-
-      if (message.type === "take-screenshot") {
-        console.log("Chrome Extension: Taking screenshot...");
-        // Capture screenshot of the current tab
-        chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-          if (chrome.runtime.lastError) {
-            console.error(
-              "Chrome Extension: Screenshot capture failed:",
-              chrome.runtime.lastError
-            );
-            ws.send(
-              JSON.stringify({
-                type: "screenshot-error",
-                error: chrome.runtime.lastError.message,
-                requestId: message.requestId,
-              })
-            );
-            return;
-          }
-
-          console.log("Chrome Extension: Screenshot captured successfully");
-          // Just send the screenshot data, let the server handle paths
-          const response = {
-            type: "screenshot-data",
-            data: dataUrl,
-            requestId: message.requestId,
-            // Only include path if it's configured in settings
-            ...(settings.screenshotPath && { path: settings.screenshotPath }),
-          };
-
-          console.log("Chrome Extension: Sending screenshot data response", {
-            ...response,
-            data: "[base64 data]",
-          });
-
-          ws.send(JSON.stringify(response));
-        });
-      }
-    } catch (error) {
-      console.error(
-        "Chrome Extension: Error processing WebSocket message:",
-        error
-      );
-    }
-  };
-
-  ws.onopen = () => {
-    console.log("Chrome Extension: WebSocket connected");
-    if (wsReconnectTimeout) {
-      clearTimeout(wsReconnectTimeout);
-      wsReconnectTimeout = null;
-    }
-  };
-
-  ws.onclose = () => {
-    console.log(
-      "Chrome Extension: WebSocket disconnected, attempting to reconnect..."
-    );
-    wsReconnectTimeout = setTimeout(setupWebSocket, WS_RECONNECT_DELAY);
-  };
-
-  ws.onerror = (error) => {
-    console.error("Chrome Extension: WebSocket error:", error);
-  };
-}
-
-// Initialize WebSocket connection when DevTools opens
-setupWebSocket();
-
-// Clean up WebSocket when DevTools closes
-window.addEventListener("unload", () => {
-  if (ws) {
-    ws.close();
-  }
-  if (wsReconnectTimeout) {
-    clearTimeout(wsReconnectTimeout);
-  }
 });

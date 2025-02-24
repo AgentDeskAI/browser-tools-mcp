@@ -10,6 +10,7 @@ A powerful browser tools server for capturing and managing browser events, logs,
 - Element selection tracking
 - WebSocket real-time communication
 - Configurable log limits and settings
+- Configurable server port via environment variable
 
 ## Installation
 
@@ -28,10 +29,14 @@ npm install -g @agentdeskai/browser-tools-server
 1. Start the server:
 
 ```bash
+# Default port (3025)
 npx @agentdeskai/browser-tools-server
+
+# Custom port
+MCP_PORT=3030 npx @agentdeskai/browser-tools-server
 ```
 
-2. The server will start on port 3025 by default
+2. The server will start on port 3025 by default. You can configure the port using the `MCP_PORT` environment variable.
 
 3. Install and enable the Browser Tools Chrome Extension
 
