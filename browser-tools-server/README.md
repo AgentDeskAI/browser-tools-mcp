@@ -38,7 +38,12 @@ MCP_PORT=3030 npx @agentdeskai/browser-tools-server
 
 2. The server will start on port 3025 by default. You can configure the port using the `MCP_PORT` environment variable.
 
+   **Important:** If you change the server port, you must also update the port in the Browser Tools Chrome Extension settings to match. Both the server and extension must use the same port to communicate.
+
 3. Install and enable the Browser Tools Chrome Extension
+   - Open Chrome DevTools (F12 or Cmd+Option+I)
+   - Select the "BrowserToolsMCP" panel
+   - In the Connection Settings section, set the Server Port if needed (default is 3025)
 
 4. The server exposes the following endpoints:
 

@@ -28,7 +28,11 @@ npm install -g @agentdeskai/browser-tools-mcp
 1. First, make sure the Browser Tools Server is running:
 
 ```bash
+# Default port (3025)
 npx @agentdeskai/browser-tools-server
+
+# Or with custom port
+MCP_PORT=3030 npx @agentdeskai/browser-tools-server
 ```
 
 2. Then start the MCP server:
@@ -37,7 +41,12 @@ npx @agentdeskai/browser-tools-server
 npx @agentdeskai/browser-tools-mcp
 ```
 
-3. The MCP server will connect to the Browser Tools Server and provide the following capabilities:
+3. Configure the Chrome Extension:
+   - Open Chrome DevTools (F12 or Cmd+Option+I)
+   - Select the "BrowserToolsMCP" panel
+   - In the Connection Settings section, set the Server Port if needed (default is 3025)
+
+4. The MCP server will connect to the Browser Tools Server and provide the following capabilities:
 
 - Console log retrieval
 - Network request monitoring
