@@ -22,6 +22,14 @@
   ],
   "author": "AgentDesk AI",
   "license": "MIT",
+  "config": {
+    "port": "3025"
+  },
+  "env": {
+    "MCP_PORT": {
+      "description": "Port number for the browser tools server (default: 3025)"
+    }
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.4.1",
     "body-parser": "^1.20.3",

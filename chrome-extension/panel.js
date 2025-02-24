@@ -10,11 +10,14 @@ let settings = {
 };
 
 // Load saved settings on startup
-chrome.storage.local.get(["browserConnectorSettings"], (result) => {
+chrome.storage.local.get(["browserConnectorSettings", "lastKnownPort"], (result) => {
   if (result.browserConnectorSettings) {
     settings = { ...settings, ...result.browserConnectorSettings };
     updateUIFromSettings();
   }
+  const port = result.lastKnownPort || 3025;
+  document.getElementById('server-port').value = port;
+  updateConnectionStatus();
 });
 
 // Initialize UI elements
@@ -126,7 +129,8 @@ captureScreenshotButton.addEventListener("click", () => {
 // Add wipe logs functionality
 const wipeLogsButton = document.getElementById("wipe-logs");
 wipeLogsButton.addEventListener("click", () => {
-  fetch("http://127.0.0.1:3025/wipelogs", {
+  const port = document.getElementById('server-port').value;
+  fetch(`http://127.0.0.1:${port}/wipelogs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   })
@@ -146,3 +150,53 @@ wipeLogsButton.addEventListener("click", () => {
       }, 2000);
     });
 });
+
+// Handle port configuration
+document.getElementById('connect-server').addEventListener('click', async function() {
+  const port = parseInt(document.getElementById('server-port').value, 10);
+  if (port < 1 || port > 65535) {
+    alert('Please enter a valid port number (1-65535)');
+    return;
+  }
+
+  try {
+    // Test connection to new port
+    const response = await fetch(`http://127.0.0.1:${port}/.port`);
+    if (response.ok) {
+      const confirmedPort = await response.text();
+      if (parseInt(confirmedPort, 10) === port) {
+        // Save the port
+        chrome.storage.local.set({ lastKnownPort: port });
+        // Notify devtools script to reconnect
+        chrome.runtime.sendMessage({
+          type: 'PORT_UPDATED',
+          port: port
+        });
+        updateConnectionStatus(true);
+      }
+    } else {
+      throw new Error('Server not responding');
+    }
+  } catch (error) {
+    console.error('Connection failed:', error);
+    updateConnectionStatus(false);
+    alert(`Could not connect to server on port ${port}. Make sure the server is running with MCP_PORT=${port}`);
+  }
+});
+
+function updateConnectionStatus(connected = null) {
+  const statusDiv = document.getElementById('connection-status');
+  const port = document.getElementById('server-port').value;
+
+  if (connected === null) {
+    // Check current connection
+    fetch(`http://127.0.0.1:${port}/.port`)
+      .then(response => response.ok ? updateConnectionStatus(true) : updateConnectionStatus(false))
+      .catch(() => updateConnectionStatus(false));
+    return;
+  }
+
+  statusDiv.innerHTML = connected ? 
+    '<span style="color: #4caf50">&#x2713; Connected!</span>' :
+    '<span style="color: #f44336">&#x2717; Disconnected</span>';
+}
