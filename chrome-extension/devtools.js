@@ -339,8 +339,12 @@ chrome.devtools.network.onRequestFinished.addListener((request) => {
 
 // Helper function to attach debugger
 async function attachDebugger() {
+  console.log("DEBUG: Starting debugger attachment process");
+  
   // First check if we're already attached to this tab
   chrome.debugger.getTargets((targets) => {
+    console.log("DEBUG: Current debugger targets:", targets);
+    
     const isAlreadyAttached = targets.some(
       (target) => target.tabId === currentTabId && target.attached
     );
@@ -365,19 +369,39 @@ async function attachDebugger() {
 
 function performAttach() {
   console.log("Performing debugger attachment to tab:", currentTabId);
+  
+  // First remove any existing listeners to avoid duplicates
+  try {
+    chrome.debugger.onEvent.removeListener(consoleMessageListener);
+    console.log("DEBUG: Removed existing console message listener");
+  } catch (e) {
+    console.log("DEBUG: No existing listener to remove");
+  }
+  
   chrome.debugger.attach({ tabId: currentTabId }, "1.3", () => {
     if (chrome.runtime.lastError) {
       console.error("Failed to attach debugger:", chrome.runtime.lastError);
       isDebuggerAttached = false;
+      
+      // Try again after a delay if we haven't exceeded max retries
+      if (attachDebuggerRetries < MAX_ATTACH_RETRIES) {
+        attachDebuggerRetries++;
+        console.log(`Retrying debugger attachment (${attachDebuggerRetries}/${MAX_ATTACH_RETRIES})...`);
+        setTimeout(attachDebugger, ATTACH_RETRY_DELAY);
+      }
       return;
     }
 
+    // Reset retry counter on successful attachment
+    attachDebuggerRetries = 0;
     isDebuggerAttached = true;
     console.log("Debugger successfully attached");
 
     // Add the event listener when attaching
     chrome.debugger.onEvent.addListener(consoleMessageListener);
+    console.log("DEBUG: Added console message listener");
 
+    // Enable Console domain
     chrome.debugger.sendCommand(
       { tabId: currentTabId },
       "Console.enable",
@@ -388,6 +412,50 @@ function performAttach() {
           return;
         }
         console.log("Console API successfully enabled");
+        
+        // Test if Console domain is working
+        console.log("DEBUG: Testing if Console domain is working...");
+        chrome.debugger.sendCommand(
+          { tabId: currentTabId },
+          "Console.clear",
+          {},
+          () => {
+            if (chrome.runtime.lastError) {
+              console.error("Console.clear failed:", chrome.runtime.lastError);
+            } else {
+              console.log("DEBUG: Console.clear succeeded");
+            }
+          }
+        );
+      }
+    );
+    
+    // Also enable Runtime domain to capture console.log calls
+    chrome.debugger.sendCommand(
+      { tabId: currentTabId },
+      "Runtime.enable",
+      {},
+      () => {
+        if (chrome.runtime.lastError) {
+          console.error("Failed to enable runtime:", chrome.runtime.lastError);
+          return;
+        }
+        console.log("Runtime API successfully enabled");
+        
+        // Test if Runtime domain is working
+        console.log("DEBUG: Testing if Runtime domain is working...");
+        chrome.debugger.sendCommand(
+          { tabId: currentTabId },
+          "Runtime.evaluate",
+          { expression: "console.log('Test from DevTools extension')" },
+          (result) => {
+            if (chrome.runtime.lastError) {
+              console.error("Runtime.evaluate failed:", chrome.runtime.lastError);
+            } else {
+              console.log("DEBUG: Runtime.evaluate succeeded:", result);
+            }
+          }
+        );
       }
     );
   });
@@ -425,8 +493,12 @@ function detachDebugger() {
 
 // Move the console message listener outside the panel creation
 const consoleMessageListener = (source, method, params) => {
+  // Add debug log for all events
+  console.log(`DEBUG: Received event: ${method} from tab ${source.tabId}, current tab: ${currentTabId}`);
+  
   // Only process events for our tab
   if (source.tabId !== currentTabId) {
+    console.log(`DEBUG: Ignoring event from different tab ${source.tabId}`);
     return;
   }
 
@@ -440,6 +512,36 @@ const consoleMessageListener = (source, method, params) => {
     };
     console.log("Sending console entry:", entry);
     sendToBrowserConnector(entry);
+  } else if (method === "Runtime.consoleAPICalled") {
+    // Handle Runtime.consoleAPICalled events
+    console.log("Runtime console API called:", params);
+    const level = params.type === "error" ? "error" : params.type;
+    
+    // Extract message from args
+    let message = "";
+    if (params.args && params.args.length > 0) {
+      try {
+        // Try to extract text from the first argument
+        if (params.args[0].value !== undefined) {
+          message = params.args[0].value;
+        } else if (params.args[0].description) {
+          message = params.args[0].description;
+        } else {
+          message = JSON.stringify(params.args);
+        }
+      } catch (e) {
+        message = "Could not extract message from console args";
+      }
+    }
+    
+    const entry = {
+      type: level === "error" ? "console-error" : "console-log",
+      level: level,
+      message: message,
+      timestamp: Date.now(),
+    };
+    console.log("Sending runtime console entry:", entry);
+    sendToBrowserConnector(entry);
   }
 };
 
@@ -452,6 +554,34 @@ chrome.devtools.panels.create("BrowserToolsMCP", "", "panel.html", (panel) => {
   panel.onShown.addListener((panelWindow) => {
     if (!isDebuggerAttached) {
       attachDebugger();
+    }
+    
+    // Add a test button to the panel
+    if (panelWindow.document.getElementById('test-console-log') === null) {
+      const testButton = panelWindow.document.createElement('button');
+      testButton.id = 'test-console-log';
+      testButton.textContent = 'Test Console Log';
+      testButton.style.position = 'fixed';
+      testButton.style.top = '10px';
+      testButton.style.right = '10px';
+      testButton.style.zIndex = '9999';
+      
+      testButton.addEventListener('click', () => {
+        console.log("DEBUG: Test button clicked, injecting console log");
+        // Inject a console.log into the inspected page
+        chrome.devtools.inspectedWindow.eval(
+          "console.log('Test log from BrowserTools MCP extension'); console.error('Test error from BrowserTools MCP extension');",
+          (result, isException) => {
+            if (isException) {
+              console.error("Failed to inject test log:", isException);
+            } else {
+              console.log("Successfully injected test log");
+            }
+          }
+        );
+      });
+      
+      panelWindow.document.body.appendChild(testButton);
     }
   });
 });
