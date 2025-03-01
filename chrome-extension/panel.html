@@ -126,6 +126,19 @@
     </div>
 
     <div class="settings-section">
+        <h3>Connection Settings</h3>
+        <div class="form-group">
+            <label for="server-port">Server Port</label>
+            <div class="port-input-group">
+                <input type="number" id="server-port" min="1" max="65535" placeholder="3025">
+                <button id="connect-server" class="action-button">Connect</button>
+            </div>
+            <div id="connection-status"></div>
+            <small>Default is 3025. If using a custom port via the MCP_PORT environment variable, set it to match here.</small>
+        </div>
+    </div>
+
+    <div class="settings-section">
         <h3>Screenshot Settings</h3>
         <div class="form-group">
             <label for="screenshot-path">Provide a directory to save screenshots to (by default screenshots will be saved to your downloads folder if no path is provided)</label>
