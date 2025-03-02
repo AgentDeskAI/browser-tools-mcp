@@ -134,6 +134,30 @@
     </div>
 
     <div class="settings-section">
+        <h3>Server Connection Settings</h3>
+        <div class="form-group">
+            <label for="server-host">Server Host</label>
+            <input type="text" id="server-host" placeholder="localhost or IP address">
+        </div>
+        <div class="form-group">
+            <label for="server-port">Server Port</label>
+            <input type="number" id="server-port" min="1" max="65535" value="3025">
+        </div>
+        <div class="quick-actions">
+            <button id="discover-server" class="action-button">
+                Auto-Discover Server
+            </button>
+            <button id="test-connection" class="action-button">
+                Test Connection
+            </button>
+        </div>
+        <div id="connection-status" style="margin-top: 8px; display: none;">
+            <span id="status-icon" class="status-indicator"></span>
+            <span id="status-text"></span>
+        </div>
+    </div>
+
+    <div class="settings-section">
         <div class="settings-header" id="advanced-settings-header">
             <h3>Advanced Settings</h3>
             <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

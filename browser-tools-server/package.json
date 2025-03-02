@@ -1,6 +1,6 @@
 {
   "name": "@agentdeskai/browser-tools-server",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A browser tools server for capturing and managing browser events, logs, and screenshots",
   "main": "dist/browser-connector.js",
   "bin": {
