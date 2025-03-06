@@ -6,6 +6,23 @@ This application is a powerful browser monitoring and interaction tool that enab
 
 Read our [docs](https://browsertools.agentdesk.ai/) for the full installation, quickstart and contribution guides.
 
+## Updates
+
+v1.1.0 is out! This includes several bug fixes for logging + screenshots.
+
+Please make sure to update the version in your IDE / MCP client as so:
+`npx @agentdeskai/browser-tools-mcp@1.1.0`
+
+Also make sure to download the latest version of the chrome extension here:
+[v1.1.0 BrowserToolsMCP Chrome Extension](https://github.com/AgentDeskAI/browser-tools-mcp/releases/download/v1.1.0/chrome-extension-v1-1-0.zip)
+
+From there you can run the local node server as usual like so:
+`npx @agentdeskai/browser-tools-server`
+
+And once you've opened your chrome dev tools, logs should be getting sent to your server!
+
+If you have any questions or issues, feel free to open an issue ticket! And if you have any ideas to make this better, feel free to reach out or open an issue ticket with an enhancement tag or reach out to me at [@tedx_ai on x](https://x.com/tedx_ai)
+
 ## Architecture
 
 There are three core components all used to capture and analyze browser data:
@@ -69,6 +86,7 @@ Once installed and configured, the system allows any compatible MCP client to:
 - Take screenshots
 - Analyze selected elements
 - Wipe logs stored in our MCP server
+- Run accessibility, performance, SEO, and best practices audits
 
 ## Compatibility
 
