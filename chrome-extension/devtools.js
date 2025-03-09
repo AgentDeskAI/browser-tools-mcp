@@ -897,6 +897,145 @@ async function setupWebSocket() {
 
             ws.send(JSON.stringify(response));
           });
+        } else if (message.type === "get-cookies") {
+          console.log("Chrome Extension: Getting cookies...");
+          // Get cookies from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              // Check if document.cookie is empty
+              if (!document.cookie.trim()) {
+                return [];
+              }
+
+              // Split the cookie string and filter out any empty entries
+              return document.cookie.split(';')
+                .map(cookie => cookie.trim())
+                .filter(cookie => cookie) // Remove empty strings
+                .map(cookie => {
+                  const equalsPos = cookie.indexOf('=');
+                  // Handle cookies with no value (name only)
+                  if (equalsPos === -1) {
+                    return { name: cookie, value: '' };
+                  }
+                  // Handle normal cookies with name=value
+                  const name = cookie.substring(0, equalsPos);
+                  const value = cookie.substring(equalsPos + 1);
+                  return { name, value };
+                });
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting cookies:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "cookies-error",
+                    error: isException || "Failed to get cookies",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: Cookies retrieved successfully:",
+                result
+              );
+              // Make sure cookies is an array, even if empty
+              const cookies = Array.isArray(result) ? result : [];
+              ws.send(
+                JSON.stringify({
+                  type: "cookies-data",
+                  cookies: cookies,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
+        } else if (message.type === "get-local-storage") {
+          console.log("Chrome Extension: Getting localStorage...");
+          // Get localStorage from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              const storage = {};
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                storage[key] = localStorage.getItem(key);
+              }
+              return storage;
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting localStorage:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "local-storage-error",
+                    error: isException || "Failed to get localStorage",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: localStorage retrieved successfully:",
+                result
+              );
+              ws.send(
+                JSON.stringify({
+                  type: "local-storage-data",
+                  storage: result,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
+        } else if (message.type === "get-session-storage") {
+          console.log("Chrome Extension: Getting sessionStorage...");
+          // Get sessionStorage from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              const storage = {};
+              for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                storage[key] = sessionStorage.getItem(key);
+              }
+              return storage;
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting sessionStorage:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "session-storage-error",
+                    error: isException || "Failed to get sessionStorage",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: sessionStorage retrieved successfully:",
+                result
+              );
+              ws.send(
+                JSON.stringify({
+                  type: "session-storage-data",
+                  storage: result,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
         }
       } catch (error) {
         console.error(

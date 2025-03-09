@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) server that provides AI-powered browser tools int
 - Network request analysis
 - Screenshot capture capabilities
 - Element selection and inspection
+- Browser storage access (cookies, localStorage, sessionStorage)
 - Real-time browser state monitoring
 
 ## Installation
@@ -44,6 +45,7 @@ npx @agentdeskai/browser-tools-mcp
 - Screenshot capture
 - Element selection
 - Browser state analysis
+- Browser storage access
 
 ## MCP Functions
 
@@ -55,6 +57,9 @@ The server provides the following MCP functions:
 - `mcp_getNetworkSuccess` - Get successful network requests
 - `mcp_getNetworkLogs` - Get all network logs
 - `mcp_getSelectedElement` - Get the currently selected DOM element
+- `mcp_getCookies` - Get cookies from the current page
+- `mcp_getLocalStorage` - Get localStorage data
+- `mcp_getSessionStorage` - Get sessionStorage data
 
 ## Integration
 
