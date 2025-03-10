@@ -339,6 +339,186 @@ server.tool("wipeLogs", "Wipe all browser logs from memory", async () => {
   });
 });
 
+// Add new tool for getting cookies
+server.tool("getCookies", "Get all cookies from the browser", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/cookies`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting cookies: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting cookies: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting cookies: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
+
+// Add new tool for getting localStorage
+server.tool("getLocalStorage", "Get all localStorage items", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/local-storage`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting localStorage: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting localStorage: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting localStorage: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
+
+// Add new tool for getting sessionStorage
+server.tool("getSessionStorage", "Get all sessionStorage items", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/session-storage`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting sessionStorage: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting sessionStorage: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting sessionStorage: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
+
 // Start receiving messages on stdio
 (async () => {
   try {

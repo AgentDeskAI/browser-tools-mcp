@@ -142,6 +142,7 @@ let currentSettings = {
   queryLimit: 30000,
   showRequestHeaders: false,
   showResponseHeaders: false,
+  sensitiveDataMode: "hide-all", // hide-all, hide-sensitive, show-all
   model: "claude-3-sonnet",
   stringSizeLimit: 500,
   maxLogSize: 20000,
@@ -159,7 +160,25 @@ interface ScreenshotCallback {
   reject: (reason: Error) => void;
 }
 
+interface CookiesCallback {
+  resolve: (value: { cookies: any[] }) => void;
+  reject: (reason: Error) => void;
+}
+
+interface LocalStorageCallback {
+  resolve: (value: { storage: any }) => void;
+  reject: (reason: Error) => void;
+}
+
+interface SessionStorageCallback {
+  resolve: (value: { storage: any }) => void;
+  reject: (reason: Error) => void;
+}
+
 const screenshotCallbacks = new Map<string, ScreenshotCallback>();
+const cookiesCallbacks = new Map<string, CookiesCallback>();
+const localStorageCallbacks = new Map<string, LocalStorageCallback>();
+const sessionStorageCallbacks = new Map<string, SessionStorageCallback>();
 
 // Function to get available port starting with the given port
 async function getAvailablePort(
@@ -544,6 +563,49 @@ export class BrowserConnector {
       }
     );
 
+    // Add endpoint for cookies
+    this.app.get(
+      "/cookies",
+      async (req: express.Request, res: express.Response): Promise<void> => {
+        console.log("Browser Connector: Received request to /cookies endpoint");
+        console.log(
+          "Browser Connector: Active WebSocket connection:",
+          !!this.activeConnection
+        );
+        await this.getCookies(req, res);
+      }
+    );
+
+    // Add endpoint for localStorage
+    this.app.get(
+      "/local-storage",
+      async (req: express.Request, res: express.Response): Promise<void> => {
+        console.log(
+          "Browser Connector: Received request to /local-storage endpoint"
+        );
+        console.log(
+          "Browser Connector: Active WebSocket connection:",
+          !!this.activeConnection
+        );
+        await this.getLocalStorage(req, res);
+      }
+    );
+
+    // Add endpoint for sessionStorage
+    this.app.get(
+      "/session-storage",
+      async (req: express.Request, res: express.Response): Promise<void> => {
+        console.log(
+          "Browser Connector: Received request to /session-storage endpoint"
+        );
+        console.log(
+          "Browser Connector: Active WebSocket connection:",
+          !!this.activeConnection
+        );
+        await this.getSessionStorage(req, res);
+      }
+    );
+
     // Handle upgrade requests for WebSocket
     this.server.on(
       "upgrade",
@@ -595,6 +657,90 @@ export class BrowserConnector {
                 new Error(data.error || "Screenshot capture failed")
               );
               screenshotCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for screenshot");
+            }
+          }
+          // Handle cookies data
+          else if (data.type === "cookies-data" && data.cookies) {
+            console.log("Received cookies data from extension");
+            const callbacks = Array.from(cookiesCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.resolve({ cookies: data.cookies });
+              cookiesCallbacks.clear(); // Clear all callbacks
+            }
+          }
+          // Handle cookies error
+          else if (data.type === "cookies-error") {
+            console.log("Received cookies error from extension: ", data.error);
+            const callbacks = Array.from(cookiesCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.reject(
+                new Error(data.error || "Cookies request failed")
+              );
+              cookiesCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for cookies");
+            }
+          }
+          // Handle localStorage data
+          else if (data.type === "local-storage-data" && data.storage) {
+            console.log("Received localStorage data from extension");
+            const callbacks = Array.from(localStorageCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.resolve({ storage: data.storage });
+              localStorageCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for localStorage");
+            }
+          }
+          // Handle localStorage error
+          else if (data.type === "local-storage-error") {
+            console.log(
+              "Received localStorage error from extension: ",
+              data.error
+            );
+            const callbacks = Array.from(localStorageCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.reject(
+                new Error(data.error || "LocalStorage request failed")
+              );
+              localStorageCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for localStorage");
+            }
+          }
+          // Handle sessionStorage data
+          else if (data.type === "session-storage-data" && data.storage) {
+            console.log("Received sessionStorage data from extension");
+            const callbacks = Array.from(sessionStorageCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.resolve({ storage: data.storage });
+              sessionStorageCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for sessionStorage");
+            }
+          }
+          // Handle sessionStorage error
+          else if (data.type === "session-storage-error") {
+            console.log(
+              "Received sessionStorage error from extension: ",
+              data.error
+            );
+            const callbacks = Array.from(sessionStorageCallbacks.values());
+            if (callbacks.length > 0) {
+              const callback = callbacks[0];
+              callback.reject(
+                new Error(data.error || "SessionStorage request failed")
+              );
+              sessionStorageCallbacks.clear(); // Clear all callbacks
+            } else {
+              console.log("No callbacks found for sessionStorage");
             }
           } else {
             console.log("Unhandled message type:", data.type);
@@ -879,6 +1025,228 @@ export class BrowserConnector {
       res.status(500).json({
         error: errorMessage,
       });
+    }
+  }
+
+  // Add method to get cookies
+  async getCookies(req: express.Request, res: express.Response) {
+    if (!this.activeConnection) {
+      console.log(
+        "Browser Connector: No active WebSocket connection to Chrome extension"
+      );
+      return res.status(503).json({ error: "Chrome extension not connected" });
+    }
+
+    try {
+      console.log("Browser Connector: Getting cookies");
+      const requestId = Date.now().toString();
+      console.log("Browser Connector: Generated requestId:", requestId);
+
+      // Create promise that will resolve when we get the cookies data
+      const cookiesPromise = new Promise<{ cookies: any[] }>(
+        (resolve, reject) => {
+          console.log(
+            `Browser Connector: Setting up cookies callback for requestId: ${requestId}`
+          );
+          // Store callback in map
+          cookiesCallbacks.set(requestId, { resolve, reject });
+          console.log(
+            "Browser Connector: Current callbacks:",
+            Array.from(cookiesCallbacks.keys())
+          );
+
+          // Set timeout to clean up if we don't get a response
+          setTimeout(() => {
+            if (cookiesCallbacks.has(requestId)) {
+              console.log(
+                `Browser Connector: Cookies request timed out for requestId: ${requestId}`
+              );
+              cookiesCallbacks.delete(requestId);
+              reject(
+                new Error(
+                  "Cookies request timed out - no response from Chrome extension"
+                )
+              );
+            }
+          }, 10000);
+        }
+      );
+
+      // Send cookies request to extension
+      const message = JSON.stringify({
+        type: "get-cookies",
+        requestId: requestId,
+      });
+      console.log(
+        `Browser Connector: Sending WebSocket message to extension:`,
+        message
+      );
+      this.activeConnection.send(message);
+
+      // Wait for cookies data
+      console.log("Browser Connector: Waiting for cookies data...");
+      const result = await cookiesPromise;
+      console.log(
+        "Browser Connector: Received cookies data, returning response..."
+      );
+
+      // Return the cookies data
+      res.json(result.cookies);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error("Browser Connector: Error getting cookies:", errorMessage);
+      return res.status(500).json({ error: errorMessage });
+    }
+  }
+
+  // Add method to get localStorage
+  async getLocalStorage(req: express.Request, res: express.Response) {
+    if (!this.activeConnection) {
+      console.log(
+        "Browser Connector: No active WebSocket connection to Chrome extension"
+      );
+      return res.status(503).json({ error: "Chrome extension not connected" });
+    }
+
+    try {
+      console.log("Browser Connector: Getting localStorage");
+      const requestId = Date.now().toString();
+      console.log("Browser Connector: Generated requestId:", requestId);
+
+      // Create promise that will resolve when we get the localStorage data
+      const localStoragePromise = new Promise<{ storage: any }>(
+        (resolve, reject) => {
+          console.log(
+            `Browser Connector: Setting up localStorage callback for requestId: ${requestId}`
+          );
+          // Store callback in map
+          localStorageCallbacks.set(requestId, { resolve, reject });
+          console.log(
+            "Browser Connector: Current callbacks:",
+            Array.from(localStorageCallbacks.keys())
+          );
+
+          // Set timeout to clean up if we don't get a response
+          setTimeout(() => {
+            if (localStorageCallbacks.has(requestId)) {
+              console.log(
+                `Browser Connector: LocalStorage request timed out for requestId: ${requestId}`
+              );
+              localStorageCallbacks.delete(requestId);
+              reject(
+                new Error(
+                  "LocalStorage request timed out - no response from Chrome extension"
+                )
+              );
+            }
+          }, 10000);
+        }
+      );
+
+      // Send localStorage request to extension
+      const message = JSON.stringify({
+        type: "get-local-storage",
+        requestId: requestId,
+      });
+      console.log(
+        `Browser Connector: Sending WebSocket message to extension:`,
+        message
+      );
+      this.activeConnection.send(message);
+
+      // Wait for localStorage data
+      console.log("Browser Connector: Waiting for localStorage data...");
+      const { storage } = await localStoragePromise;
+      console.log(
+        "Browser Connector: Received localStorage data, returning response..."
+      );
+
+      // Return the localStorage data
+      res.json(storage);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        "Browser Connector: Error getting localStorage:",
+        errorMessage
+      );
+      return res.status(500).json({ error: errorMessage });
+    }
+  }
+
+  // Add method to get sessionStorage
+  async getSessionStorage(req: express.Request, res: express.Response) {
+    if (!this.activeConnection) {
+      console.log(
+        "Browser Connector: No active WebSocket connection to Chrome extension"
+      );
+      return res.status(503).json({ error: "Chrome extension not connected" });
+    }
+
+    try {
+      console.log("Browser Connector: Getting sessionStorage");
+      const requestId = Date.now().toString();
+      console.log("Browser Connector: Generated requestId:", requestId);
+
+      // Create promise that will resolve when we get the sessionStorage data
+      const sessionStoragePromise = new Promise<{ storage: any }>(
+        (resolve, reject) => {
+          console.log(
+            `Browser Connector: Setting up sessionStorage callback for requestId: ${requestId}`
+          );
+          // Store callback in map
+          sessionStorageCallbacks.set(requestId, { resolve, reject });
+          console.log(
+            "Browser Connector: Current callbacks:",
+            Array.from(sessionStorageCallbacks.keys())
+          );
+
+          // Set timeout to clean up if we don't get a response
+          setTimeout(() => {
+            if (sessionStorageCallbacks.has(requestId)) {
+              console.log(
+                `Browser Connector: SessionStorage request timed out for requestId: ${requestId}`
+              );
+              sessionStorageCallbacks.delete(requestId);
+              reject(
+                new Error(
+                  "SessionStorage request timed out - no response from Chrome extension"
+                )
+              );
+            }
+          }, 10000);
+        }
+      );
+
+      // Send sessionStorage request to extension
+      const message = JSON.stringify({
+        type: "get-session-storage",
+        requestId: requestId,
+      });
+      console.log(
+        `Browser Connector: Sending WebSocket message to extension:`,
+        message
+      );
+      this.activeConnection.send(message);
+
+      // Wait for sessionStorage data
+      console.log("Browser Connector: Waiting for sessionStorage data...");
+      const { storage } = await sessionStoragePromise;
+      console.log(
+        "Browser Connector: Received sessionStorage data, returning response..."
+      );
+
+      // Return the sessionStorage data
+      res.json(storage);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        "Browser Connector: Error getting sessionStorage:",
+        errorMessage
+      );
+      return res.status(500).json({ error: errorMessage });
     }
   }
 }

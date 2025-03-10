@@ -8,6 +8,7 @@ A powerful browser tools server for capturing and managing browser events, logs,
 - Network request monitoring
 - Screenshot capture
 - Element selection tracking
+- Browser storage access (cookies, localStorage, sessionStorage)
 - WebSocket real-time communication
 - Configurable log limits and settings
 
@@ -44,6 +45,9 @@ npx @agentdeskai/browser-tools-server
 - `/all-xhr` - Get all network requests
 - `/screenshot` - Capture screenshots
 - `/selected-element` - Get currently selected DOM element
+- `/cookies` - Get cookies from the current page
+- `/local-storage` - Get localStorage data
+- `/session-storage` - Get sessionStorage data
 
 ## API Documentation
 
@@ -55,6 +59,9 @@ npx @agentdeskai/browser-tools-server
 - `GET /network-success` - Returns recent successful network requests
 - `GET /all-xhr` - Returns all recent network requests
 - `GET /selected-element` - Returns the currently selected DOM element
+- `GET /cookies` - Returns cookies from the current page
+- `GET /local-storage` - Returns localStorage data
+- `GET /session-storage` - Returns sessionStorage data
 
 ### POST Endpoints
 
