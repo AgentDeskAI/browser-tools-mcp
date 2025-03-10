@@ -8,6 +8,7 @@ let settings = {
   maxLogSize: 20000,
   showRequestHeaders: false,
   showResponseHeaders: false,
+  sensitiveDataMode: "hide-all", // hide-all, hide-sensitive, show-all
   screenshotPath: "", // Add new setting for screenshot path
   serverHost: "localhost", // Default server host
   serverPort: 3025, // Default server port
@@ -20,6 +21,187 @@ let attachDebuggerRetries = 0;
 const currentTabId = chrome.devtools.inspectedWindow.tabId;
 const MAX_ATTACH_RETRIES = 3;
 const ATTACH_RETRY_DELAY = 1000; // 1 second
+
+// Sensitive key patterns - these match keys that typically contain sensitive data
+const SENSITIVE_KEY_PATTERNS = [
+  // Authentication related
+  /auth/i,
+  /token/i,
+  /jwt/i,
+  /session/i,
+  /api[-_]?key/i,
+  /secret/i,
+  /password/i,
+  /pwd/i,
+  /pass/i,
+  /credential/i,
+  /oauth/i,
+  /refresh[-_]?token/i,
+  /access[-_]?token/i,
+  /private[-_]?key/i,
+
+  // Personal information
+  /ssn/i,
+  /social[-_]?security/i,
+  /dob/i,
+  /birth/i,
+  /phone/i,
+  /address/i,
+  /zip/i,
+  /postal/i,
+  /license/i,
+  /credit[-_]?card/i,
+  /card[-_]?number/i,
+  /cvv/i,
+  /ccv/i,
+
+  // Financial
+  /bank/i,
+  /account/i,
+  /payment/i,
+  /tax/i,
+  /salary/i,
+  /income/i,
+
+  // Health related
+  /medical/i,
+  /insurance/i,
+  /diagnos/i,
+
+  // Other common sensitive data keys
+  /private/i,
+  /confidential/i,
+  /secure/i,
+  /key/i,
+];
+
+// Value patterns that might indicate sensitive data regardless of key name
+const SENSITIVE_VALUE_PATTERNS = [
+  // JWT token pattern (three base64-encoded segments separated by periods)
+  /^ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+
+  // API Keys (various formats)
+  /^[A-Za-z0-9_-]{16,128}$/, // generic api key
+  /^AKIA[0-9A-Z]{16}$/, // aws access key
+  /^[A-Za-z0-9/+=]{40}$/, // aws secret key
+  /^sk-[A-Za-z0-9]{32,}$/, // popular api keys
+  /^(sk|pk)_(test|live)_[A-Za-z0-9]{24,}$/, // stripe api key
+  /^AIza[0-9A-Za-z-_]{35}$/, // google api key
+  /^gh[pousr]_[A-Za-z0-9_]{36,255}$/, // github token
+
+  // General API key patterns
+  /^[A-Za-z0-9._-]{32,}$/,
+  /^[A-Za-z0-9]{8,}[-_][A-Za-z0-9]{4,}[-_][A-Za-z0-9]{4,}[-_][A-Za-z0-9]{4,}[-_][A-Za-z0-9]{12,}$/,
+
+  // OAuth token patterns
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^bearer [A-Za-z0-9._-]+$/i, // oauth bearer token
+
+  // Credit card patterns (simplified, real implementation would use Luhn algorithm)
+  /^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})$/,
+
+  // Social Security Number pattern (US)
+  /^\d{3}-\d{2}-\d{4}$/,
+
+  // Email addresses
+  /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+];
+
+// Add entropy calculation helper before isSensitiveValue function
+function calculateNormalizedEntropy(str) {
+  // Create frequency map
+  const freq = new Map();
+  for (const char of str) {
+    freq.set(char, (freq.get(char) || 0) + 1);
+  }
+
+  // Calculate entropy using Shannon's formula
+  let entropy = 0;
+  const len = str.length;
+  for (const count of freq.values()) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+
+  // Calculate normalized entropy
+  const uniqueChars = new Set(str).size;
+  if (uniqueChars === 0) {
+    return 0;
+  }
+  const maxEntropy = Math.log2(uniqueChars);
+  return entropy / maxEntropy;
+}
+
+function isSensitiveValue(value) {
+  // Only check strings
+  if (typeof value !== "string") return false;
+
+  // Skip very short values
+  if (value.length < 8) return false;
+
+  // Check against regex patterns first
+  if (SENSITIVE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
+    return true;
+  }
+
+  // Entropy-based checks
+  if (value.length > 16) {
+    const normalizedEntropy = calculateNormalizedEntropy(value);
+    // Strings which achieve > 65% of their maximum possible entropy are likely to contain sensitive data
+    if (normalizedEntropy > 0.65) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isSensitiveKey(key) {
+  return SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+function filterSensitiveCookies(cookies) {
+  if (!Array.isArray(cookies)) return [];
+
+  return cookies.map((cookie) => {
+    if (!cookie || typeof cookie !== "object") return cookie;
+
+    const { name, value } = cookie;
+
+    if (
+      settings.sensitiveDataMode === "hide-all" ||
+      (settings.sensitiveDataMode === "hide-sensitive" &&
+        (isSensitiveKey(name) || isSensitiveValue(value)))
+    ) {
+      return {
+        ...cookie,
+        value: "[SENSITIVE DATA REDACTED]",
+      };
+    }
+
+    return cookie;
+  });
+}
+
+function filterSensitiveStorage(storage) {
+  if (!storage || typeof storage !== "object") return {};
+
+  const result = {};
+
+  for (const [key, value] of Object.entries(storage)) {
+    if (
+      settings.sensitiveDataMode === "hide-all" ||
+      (settings.sensitiveDataMode === "hide-sensitive" &&
+        (isSensitiveKey(key) || isSensitiveValue(value)))
+    ) {
+      result[key] = "[SENSITIVE DATA REDACTED]";
+    } else {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
 
 // Load saved settings on startup
 chrome.storage.local.get(["browserConnectorSettings"], (result) => {
@@ -314,6 +496,7 @@ async function sendToBrowserConnector(logData) {
       queryLimit: settings.queryLimit,
       showRequestHeaders: settings.showRequestHeaders,
       showResponseHeaders: settings.showResponseHeaders,
+      sensitiveDataMode: settings.sensitiveDataMode,
     },
   };
 
@@ -1094,6 +1277,175 @@ async function setupWebSocket() {
           };
 
           requestCurrentUrl();
+        } else if (message.type === "get-cookies") {
+          console.log("Chrome Extension: Getting cookies...");
+          // Get cookies from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              // Check if document.cookie is empty
+              if (!document.cookie.trim()) {
+                return [];
+              }
+
+              // Split the cookie string and filter out any empty entries
+              return document.cookie.split(';')
+                .map(cookie => cookie.trim())
+                .filter(cookie => cookie) // Remove empty strings
+                .map(cookie => {
+                  const equalsPos = cookie.indexOf('=');
+                  // Handle cookies with no value (name only)
+                  if (equalsPos === -1) {
+                    return { name: cookie, value: '' };
+                  }
+                  // Handle normal cookies with name=value
+                  const name = cookie.substring(0, equalsPos);
+                  const value = cookie.substring(equalsPos + 1);
+                  return { name, value };
+                });
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting cookies:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "cookies-error",
+                    error: isException || "Failed to get cookies",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: Cookies retrieved successfully:",
+                result
+              );
+
+              // Make sure cookies is an array, even if empty
+              let cookies = Array.isArray(result) ? result : [];
+
+              // Filter sensitive data if showSensitive is false
+              if (settings.sensitiveDataMode !== "show-all") {
+                console.log(
+                  "Chrome Extension: Filtering sensitive cookie data"
+                );
+                cookies = filterSensitiveCookies(cookies);
+              }
+
+              ws.send(
+                JSON.stringify({
+                  type: "cookies-data",
+                  cookies: cookies,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
+        } else if (message.type === "get-local-storage") {
+          console.log("Chrome Extension: Getting localStorage...");
+          // Get localStorage from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              const storage = {};
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                storage[key] = localStorage.getItem(key);
+              }
+              return storage;
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting localStorage:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "local-storage-error",
+                    error: isException || "Failed to get localStorage",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: localStorage retrieved successfully:",
+                result
+              );
+
+              // Filter sensitive data if showSensitive is false
+              let storageData = result;
+              if (settings.sensitiveDataMode !== "show-all") {
+                console.log(
+                  "Chrome Extension: Filtering sensitive localStorage data"
+                );
+                storageData = filterSensitiveStorage(result);
+              }
+
+              ws.send(
+                JSON.stringify({
+                  type: "local-storage-data",
+                  storage: storageData,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
+        } else if (message.type === "get-session-storage") {
+          console.log("Chrome Extension: Getting sessionStorage...");
+          // Get sessionStorage from the current tab
+          chrome.devtools.inspectedWindow.eval(
+            `(function() {
+              const storage = {};
+              for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                storage[key] = sessionStorage.getItem(key);
+              }
+              return storage;
+            })()`,
+            (result, isException) => {
+              if (isException || !result) {
+                console.error(
+                  "Chrome Extension: Error getting sessionStorage:",
+                  isException
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "session-storage-error",
+                    error: isException || "Failed to get sessionStorage",
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
+
+              console.log(
+                "Chrome Extension: sessionStorage retrieved successfully:",
+                result
+              );
+
+              // Filter sensitive data if showSensitive is false
+              let storageData = result;
+              if (settings.sensitiveDataMode !== "show-all") {
+                console.log(
+                  "Chrome Extension: Filtering sensitive sessionStorage data"
+                );
+                storageData = filterSensitiveStorage(result);
+              }
+
+              ws.send(
+                JSON.stringify({
+                  type: "session-storage-data",
+                  storage: storageData,
+                  requestId: message.requestId,
+                })
+              );
+            }
+          );
         }
       } catch (error) {
         console.error(

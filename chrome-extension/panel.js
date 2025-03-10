@@ -5,6 +5,7 @@ let settings = {
   stringSizeLimit: 500,
   showRequestHeaders: false,
   showResponseHeaders: false,
+  sensitiveDataMode: "hide-all", // Options: hide-all, hide-sensitive, hide-nothing
   maxLogSize: 20000,
   screenshotPath: "",
   // Add server connection settings
@@ -166,12 +167,12 @@ function createConnectionBanner() {
   const banner = document.createElement("div");
   banner.id = "connection-banner";
   banner.style.cssText = `
-    padding: 6px 0px; 
+    padding: 6px 0px;
     margin-bottom: 4px;
-    width: 40%; 
-    display: flex; 
+    width: 40%;
+    display: flex;
     flex-direction: column;
-    align-items: flex-start; 
+    align-items: flex-start;
     background-color:rgba(0,0,0,0);
     border-radius: 11px;
     font-size: 11px;
@@ -226,13 +227,13 @@ function createConnectionBanner() {
   const indicator = document.createElement("div");
   indicator.id = "banner-status-indicator";
   indicator.style.cssText = `
-    width: 6px; 
-    height: 6px; 
+    width: 6px;
+    height: 6px;
     position: relative;
     top: 1px;
-    border-radius: 50%; 
-    background-color: #ccc; 
-    margin-right: 8px; 
+    border-radius: 50%;
+    background-color: #ccc;
+    margin-right: 8px;
     flex-shrink: 0;
     transition: background-color 0.3s ease;
   `;
@@ -327,6 +328,11 @@ const connectionStatusDiv = document.getElementById("connection-status");
 const statusIcon = document.getElementById("status-icon");
 const statusText = document.getElementById("status-text");
 
+// Sensitive data UI elements
+const hideAllRadio = document.getElementById("hide-all-data");
+const hideSensitiveRadio = document.getElementById("hide-sensitive-data");
+const hideNothingRadio = document.getElementById("hide-nothing");
+
 // Initialize collapsible advanced settings
 const advancedSettingsHeader = document.getElementById(
   "advanced-settings-header"
@@ -356,6 +362,23 @@ function updateUIFromSettings() {
   serverHostInput.value = settings.serverHost;
   serverPortInput.value = settings.serverPort;
   allowAutoPasteCheckbox.checked = settings.allowAutoPaste;
+  hideAllRadio.checked = false;
+  hideSensitiveRadio.checked = false;
+  hideNothingRadio.checked = false;
+  switch (settings.sensitiveDataMode) {
+    case "hide-all":
+      hideAllRadio.checked = true;
+      break;
+    case "hide-sensitive":
+      hideSensitiveRadio.checked = true;
+      break;
+    case "hide-nothing":
+      hideNothingRadio.checked = true;
+      break;
+    default:
+      // Default to most secure option if setting is invalid
+      hideAllRadio.checked = true;
+  }
 }
 
 // Save settings
@@ -392,6 +415,27 @@ showRequestHeadersCheckbox.addEventListener("change", (e) => {
 showResponseHeadersCheckbox.addEventListener("change", (e) => {
   settings.showResponseHeaders = e.target.checked;
   saveSettings();
+});
+
+hideAllRadio.addEventListener("change", (e) => {
+  if (e.target.checked) {
+    settings.sensitiveDataMode = "hide-all";
+    saveSettings();
+  }
+});
+
+hideSensitiveRadio.addEventListener("change", (e) => {
+  if (e.target.checked) {
+    settings.sensitiveDataMode = "hide-sensitive";
+    saveSettings();
+  }
+});
+
+hideNothingRadio.addEventListener("change", (e) => {
+  if (e.target.checked) {
+    settings.sensitiveDataMode = "hide-nothing";
+    saveSettings();
+  }
 });
 
 maxLogSizeInput.addEventListener("change", (e) => {
