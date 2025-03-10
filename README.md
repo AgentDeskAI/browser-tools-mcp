@@ -48,13 +48,21 @@ These tools can call out to external APIs but in our case, **all logs are stored
 
 All consumers of the BrowserTools MCP Server interface with the same NodeJS API and Chrome extension.
 
-#### Chrome Extension
+#### Browser Extensions
 
 - Monitors XHR requests/responses and console logs
 - Tracks selected DOM elements
 - Sends all logs and current element to the BrowserTools Connector
 - Connects to Websocket server to capture/send screenshots
 - Allows user to configure token/truncation limits + screenshot folder path
+
+##### Firefox Installation
+
+1.  Navigate to `about:debugging#/runtime/this-firefox`.
+2.  Click "Load Temporary Add-on..."
+3.  Select the `manifest.json` file from the `firefox-extension` directory.
+
+The extension will now be loaded and active in your Firefox browser.
 
 #### Node Server
 

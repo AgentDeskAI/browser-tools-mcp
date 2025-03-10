@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            padding: 16px;
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #282828;
+            color: #fff;
+        }
+        .endpoint-list {
+            margin: 16px 0;
+        }
+        .endpoint-item {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+        .endpoint-form {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+        button {
+            padding: 4px 8px;
+        }
+        input {
+            padding: 4px;
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-connected {
+            background: #4caf50;
+        }
+        .status-disconnected {
+            background: #f44336;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 4px;
+        }
+        .checkbox-group {
+            margin-bottom: 8px;
+        }
+        input[type="number"],
+        input[type="text"] {
+            padding: 4px;
+            width: 200px;
+        }
+        .settings-section {
+            border: 1px solid #ccc;
+            padding: 16px;
+            margin-bottom: 16px;
+            border-radius: 4px;
+        }
+        .settings-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+        .settings-header h3 {
+            margin: 0;
+        }
+        .settings-content {
+            display: none;
+            margin-top: 16px;
+        }
+        .settings-content.visible {
+            display: block;
+        }
+        .chevron {
+            width: 20px;
+            height: 20px;
+            transition: transform 0.3s ease;
+        }
+        .chevron.open {
+            transform: rotate(180deg);
+        }
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .action-button {
+            background-color: #4a4a4a;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .action-button:hover {
+            background-color: #5a5a5a;
+        }
+        .action-button.danger {
+            background-color: #f44336;
+        }
+        .action-button.danger:hover {
+            background-color: #d32f2f;
+        }
+    </style>
+</head>
+<body>
+    <div class="settings-section">
+        <h3>Quick Actions</h3>
+        <div class="quick-actions">
+            <button id="capture-screenshot" class="action-button">
+                Capture Screenshot
+            </button>
+            <button id="wipe-logs" class="action-button danger">
+                Wipe All Logs
+            </button>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <h3>Screenshot Settings</h3>
+        <div class="form-group">
+            <label for="screenshot-path">Provide a directory to save screenshots to (by default screenshots will be saved to your downloads folder if no path is provided)</label>
+            <input type="text" id="screenshot-path" placeholder="/path/to/screenshots">
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <div class="settings-header" id="advanced-settings-header">
+            <h3>Advanced Settings</h3>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+        </div>
+        
+        <div class="settings-content" id="advanced-settings-content">
+            <div class="form-group">
+                <label for="log-limit">Log Limit (number of logs)</label>
+                <input type="number" id="log-limit" min="1" value="50">
+            </div>
+
+            <div class="form-group">
+                <label for="query-limit">Query Limit (characters)</label>
+                <input type="number" id="query-limit" min="1" value="30000">
+            </div>
+
+            <div class="form-group">
+                <label for="string-size-limit">String Size Limit (characters)</label>
+                <input type="number" id="string-size-limit" min="1" value="500">
+            </div>
+
+            <div class="form-group">
+                <label for="max-log-size">Max Log Size (characters)</label>
+                <input type="number" id="max-log-size" min="1000" value="20000">
+            </div>
+
+            <div class="checkbox-group">
+                <label>
+                    <input type="checkbox" id="show-request-headers">
+                    Include Request Headers
+                </label>
+            </div>
+
+            <div class="checkbox-group">
+                <label>
+                    <input type="checkbox" id="show-response-headers">
+                    Include Response Headers
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <script src="panel.js"></script>
+</body>
+</html> 
