@@ -1,3 +1,10 @@
 node_modules
 dist
 .port
+.DS_Store
+.pnpm-store/
+pnpm-lock.yaml
+.env
+.env.*
+coverage/
+*.log

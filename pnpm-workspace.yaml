@@ -1,0 +1,4 @@
+packages:
+  - 'browser-tools-server'
+  - 'browser-tools-mcp'
+  - 'chrome-extension' 

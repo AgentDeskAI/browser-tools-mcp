@@ -1,25 +1,35 @@
 #!/usr/bin/env node
 
-import express from "express";
-import cors from "cors";
-import bodyParser from "body-parser";
-import { tokenizeAndEstimateCost } from "llm-cost";
-import { WebSocketServer, WebSocket } from "ws";
-import fs from "fs";
-import path from "path";
-import { IncomingMessage } from "http";
-import { Socket } from "net";
-import os from "os";
-import { exec } from "child_process";
+import express from 'express';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+import { tokenizeAndEstimateCost } from 'llm-cost';
+import { WebSocketServer, WebSocket } from 'ws';
+import fs from 'fs';
+import path from 'path';
+import { IncomingMessage } from 'http';
+import { Socket } from 'net';
+import os from 'os';
+import { exec } from 'child_process';
 import {
   runPerformanceAudit,
   runAccessibilityAudit,
   runSEOAudit,
   AuditCategory,
   LighthouseReport,
-} from "./lighthouse/index.js";
-import * as net from "net";
-import { runBestPracticesAudit } from "./lighthouse/best-practices.js";
+} from './lighthouse/index.js';
+import * as net from 'net';
+import { runBestPracticesAudit } from './lighthouse/best-practices.js';
+import {
+  BaseLog,
+  ConsoleLog,
+  ConsoleError,
+  NetworkRequest,
+  ScreenshotCallback,
+  ScreenshotMessage,
+  BrowserConnectorSettings,
+  SelectedElement,
+} from './types.js';
 
 /**
  * Converts a file path to the appropriate format for the current platform
@@ -37,30 +47,30 @@ function convertPathForCurrentPlatform(inputPath: string): string {
   console.log(`Converting path "${inputPath}" for platform: ${platform}`);
 
   // Windows-specific conversion
-  if (platform === "win32") {
+  if (platform === 'win32') {
     // Convert forward slashes to backslashes
-    return inputPath.replace(/\//g, "\\");
+    return inputPath.replace(/\//g, '\\');
   }
 
   // Linux/Mac-specific conversion
-  if (platform === "linux" || platform === "darwin") {
+  if (platform === 'linux' || platform === 'darwin') {
     // Check if this is a Windows UNC path (starts with \\)
-    if (inputPath.startsWith("\\\\") || inputPath.includes("\\")) {
+    if (inputPath.startsWith('\\\\') || inputPath.includes('\\')) {
       // Check if this is a WSL path (contains wsl.localhost or wsl$)
-      if (inputPath.includes("wsl.localhost") || inputPath.includes("wsl$")) {
+      if (inputPath.includes('wsl.localhost') || inputPath.includes('wsl$')) {
         // Extract the path after the distribution name
         // Handle both \\wsl.localhost\Ubuntu\path and \\wsl$\Ubuntu\path formats
-        const parts = inputPath.split("\\").filter((part) => part.length > 0);
-        console.log("Path parts:", parts);
+        const parts = inputPath.split('\\').filter((part) => part.length > 0);
+        console.log('Path parts:', parts);
 
         // Find the index after the distribution name
         const distNames = [
-          "Ubuntu",
-          "Debian",
-          "kali",
-          "openSUSE",
-          "SLES",
-          "Fedora",
+          'Ubuntu',
+          'Debian',
+          'kali',
+          'openSUSE',
+          'SLES',
+          'Fedora',
         ];
 
         // Find the distribution name in the path
@@ -77,7 +87,7 @@ function convertPathForCurrentPlatform(inputPath: string): string {
 
         if (distIndex !== -1 && distIndex + 1 < parts.length) {
           // Reconstruct the path as a native Linux path
-          const linuxPath = "/" + parts.slice(distIndex + 1).join("/");
+          const linuxPath = '/' + parts.slice(distIndex + 1).join('/');
           console.log(
             `Converted Windows WSL path "${inputPath}" to Linux path "${linuxPath}"`
           );
@@ -88,15 +98,15 @@ function convertPathForCurrentPlatform(inputPath: string): string {
         // try to extract everything after wsl.localhost or wsl$
         const wslIndex = parts.findIndex(
           (part) =>
-            part === "wsl.localhost" ||
-            part === "wsl$" ||
-            part.toLowerCase() === "wsl.localhost" ||
-            part.toLowerCase() === "wsl$"
+            part === 'wsl.localhost' ||
+            part === 'wsl$' ||
+            part.toLowerCase() === 'wsl.localhost' ||
+            part.toLowerCase() === 'wsl$'
         );
 
         if (wslIndex !== -1 && wslIndex + 2 < parts.length) {
           // Skip the WSL prefix and distribution name
-          const linuxPath = "/" + parts.slice(wslIndex + 2).join("/");
+          const linuxPath = '/' + parts.slice(wslIndex + 2).join('/');
           console.log(
             `Converted Windows WSL path "${inputPath}" to Linux path "${linuxPath}"`
           );
@@ -106,8 +116,8 @@ function convertPathForCurrentPlatform(inputPath: string): string {
 
       // For non-WSL Windows paths, just normalize the slashes
       const normalizedPath = inputPath
-        .replace(/\\\\/g, "/")
-        .replace(/\\/g, "/");
+        .replace(/\\\\/g, '/')
+        .replace(/\\/g, '/');
       console.log(
         `Converted Windows UNC path "${inputPath}" to "${normalizedPath}"`
       );
@@ -118,8 +128,8 @@ function convertPathForCurrentPlatform(inputPath: string): string {
     if (/^[A-Z]:\\/i.test(inputPath)) {
       // Convert Windows drive path to Linux/Mac compatible path
       const normalizedPath = inputPath
-        .replace(/^[A-Z]:\\/i, "/")
-        .replace(/\\/g, "/");
+        .replace(/^[A-Z]:\\/i, '/')
+        .replace(/\\/g, '/');
       console.log(
         `Converted Windows drive path "${inputPath}" to "${normalizedPath}"`
       );
@@ -135,50 +145,41 @@ function convertPathForCurrentPlatform(inputPath: string): string {
 function getDefaultDownloadsFolder(): string {
   const homeDir = os.homedir();
   // Downloads folder is typically the same path on Windows, macOS, and Linux
-  const downloadsPath = path.join(homeDir, "Downloads", "mcp-screenshots");
+  const downloadsPath = path.join(homeDir, 'Downloads', 'mcp-screenshots');
   return downloadsPath;
 }
 
 // We store logs in memory
-const consoleLogs: any[] = [];
-const consoleErrors: any[] = [];
-const networkErrors: any[] = [];
-const networkSuccess: any[] = [];
-const allXhr: any[] = [];
+const consoleLogs: ConsoleLog[] = [];
+const consoleErrors: ConsoleError[] = [];
+const networkErrors: NetworkRequest[] = [];
+const networkSuccess: NetworkRequest[] = [];
+const allXhr: NetworkRequest[] = [];
 
 // Store the current URL from the extension
-let currentUrl: string = "";
+let currentUrl: string = '';
 
 // Store the current tab ID from the extension
 let currentTabId: string | number | null = null;
 
 // Add settings state
-let currentSettings = {
+let currentSettings: BrowserConnectorSettings = {
   logLimit: 50,
   queryLimit: 30000,
   showRequestHeaders: false,
   showResponseHeaders: false,
-  model: "claude-3-sonnet",
+  model: 'claude-3-sonnet',
   stringSizeLimit: 500,
   maxLogSize: 20000,
   screenshotPath: getDefaultDownloadsFolder(),
   // Add server host configuration
-  serverHost: process.env.SERVER_HOST || "0.0.0.0", // Default to all interfaces
+  serverHost: process.env.SERVER_HOST || '0.0.0.0', // Default to all interfaces
 };
 
 // Add new storage for selected element
-let selectedElement: any = null;
+let selectedElement: SelectedElement | null = null;
 
 // Add new state for tracking screenshot requests
-interface ScreenshotCallback {
-  resolve: (value: {
-    data: string;
-    path?: string;
-    autoPaste?: boolean;
-  }) => void;
-  reject: (reason: Error) => void;
-}
-
 const screenshotCallbacks = new Map<string, ScreenshotCallback>();
 
 // Function to get available port starting with the given port
@@ -197,8 +198,8 @@ async function getAvailablePort(
         const testServer = net.createServer();
 
         // Handle errors (e.g., port in use)
-        testServer.once("error", (err: any) => {
-          if (err.code === "EADDRINUSE") {
+        testServer.once('error', (err: any) => {
+          if (err.code === 'EADDRINUSE') {
             console.log(`Port ${currentPort} is in use, trying next port...`);
             currentPort++;
             attempts++;
@@ -209,7 +210,7 @@ async function getAvailablePort(
         });
 
         // If we can listen, the port is available
-        testServer.once("listening", () => {
+        testServer.once('listening', () => {
           // Make sure to close the server to release the port
           testServer.close(() => {
             console.log(`Found available port: ${currentPort}`);
@@ -238,21 +239,21 @@ async function getAvailablePort(
 }
 
 // Start with requested port and find an available one
-const REQUESTED_PORT = parseInt(process.env.PORT || "3025", 10);
+const REQUESTED_PORT = parseInt(process.env.PORT || '3025', 10);
 let PORT = REQUESTED_PORT;
 
 // Create application and initialize middleware
 const app = express();
 app.use(cors());
 // Increase JSON body parser limit to 50MB to handle large screenshots
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // Helper to recursively truncate strings in any data structure
 function truncateStringsInData(data: any, maxLength: number): any {
-  if (typeof data === "string") {
+  if (typeof data === 'string') {
     return data.length > maxLength
-      ? data.substring(0, maxLength) + "... (truncated)"
+      ? data.substring(0, maxLength) + '... (truncated)'
       : data;
   }
 
@@ -260,7 +261,7 @@ function truncateStringsInData(data: any, maxLength: number): any {
     return data.map((item) => truncateStringsInData(item, maxLength));
   }
 
-  if (typeof data === "object" && data !== null) {
+  if (typeof data === 'object' && data !== null) {
     const result: any = {};
     for (const [key, value] of Object.entries(data)) {
       result[key] = truncateStringsInData(value, maxLength);
@@ -291,7 +292,7 @@ function processLogsWithSettings(logs: any[]) {
   return logs.map((log) => {
     const processedLog = { ...log };
 
-    if (log.type === "network-request") {
+    if (log.type === 'network-request') {
       // Handle headers visibility
       if (!currentSettings.showRequestHeaders) {
         delete processedLog.requestHeaders;
@@ -341,9 +342,9 @@ function truncateLogsToQueryLimit(logs: any[]): any[] {
 }
 
 // Endpoint for the extension to POST data
-app.post("/extension-log", (req, res) => {
-  console.log("\n=== Received Extension Log ===");
-  console.log("Request body:", {
+app.post('/extension-log', (req, res) => {
+  console.log('\n=== Received Extension Log ===');
+  console.log('Request body:', {
     dataType: req.body.data?.type,
     timestamp: req.body.data?.timestamp,
     hasSettings: !!req.body.settings,
@@ -353,7 +354,7 @@ app.post("/extension-log", (req, res) => {
 
   // Update settings if provided
   if (settings) {
-    console.log("Updating settings:", settings);
+    console.log('Updating settings:', settings);
     currentSettings = {
       ...currentSettings,
       ...settings,
@@ -361,35 +362,37 @@ app.post("/extension-log", (req, res) => {
   }
 
   if (!data) {
-    console.log("Warning: No data received in log request");
-    res.status(400).json({ status: "error", message: "No data provided" });
+    console.log('Warning: No data received in log request');
+    res.status(400).json({ status: 'error', message: 'No data provided' });
     return;
   }
 
   console.log(`Processing ${data.type} log entry`);
 
+  let logEntry: Partial<NetworkRequest> | null = null;
+
   switch (data.type) {
-    case "page-navigated":
+    case 'page-navigated':
       // Handle page navigation event via HTTP POST
       // Note: This is also handled in the WebSocket message handler
       // as the extension may send navigation events through either channel
-      console.log("Received page navigation event with URL:", data.url);
+      console.log('Received page navigation event with URL:', data.url);
       currentUrl = data.url;
 
       // Also update the tab ID if provided
       if (data.tabId) {
-        console.log("Updating tab ID from page navigation event:", data.tabId);
+        console.log('Updating tab ID from page navigation event:', data.tabId);
         currentTabId = data.tabId;
       }
 
-      console.log("Updated current URL:", currentUrl);
+      console.log('Updated current URL:', currentUrl);
       break;
-    case "console-log":
-      console.log("Adding console log:", {
+    case 'console-log':
+      console.log('Adding console log:', {
         level: data.level,
         message:
           data.message?.substring(0, 100) +
-          (data.message?.length > 100 ? "..." : ""),
+          (data.message?.length > 100 ? '...' : ''),
         timestamp: data.timestamp,
       });
       consoleLogs.push(data);
@@ -400,12 +403,12 @@ app.post("/extension-log", (req, res) => {
         consoleLogs.shift();
       }
       break;
-    case "console-error":
-      console.log("Adding console error:", {
+    case 'console-error':
+      console.log('Adding console error:', {
         level: data.level,
         message:
           data.message?.substring(0, 100) +
-          (data.message?.length > 100 ? "..." : ""),
+          (data.message?.length > 100 ? '...' : ''),
         timestamp: data.timestamp,
       });
       consoleErrors.push(data);
@@ -416,14 +419,14 @@ app.post("/extension-log", (req, res) => {
         consoleErrors.shift();
       }
       break;
-    case "network-request":
-      const logEntry = {
+    case 'network-request':
+      logEntry = {
         url: data.url,
         method: data.method,
         status: data.status,
         timestamp: data.timestamp,
       };
-      console.log("Adding network request:", logEntry);
+      console.log('Adding network request:', logEntry);
 
       // Route network requests based on status code
       if (data.status >= 400) {
@@ -444,8 +447,8 @@ app.post("/extension-log", (req, res) => {
         }
       }
       break;
-    case "selected-element":
-      console.log("Updating selected element:", {
+    case 'selected-element':
+      console.log('Updating selected element:', {
         tagName: data.element?.tagName,
         id: data.element?.id,
         className: data.element?.className,
@@ -453,42 +456,42 @@ app.post("/extension-log", (req, res) => {
       selectedElement = data.element;
       break;
     default:
-      console.log("Unknown log type:", data.type);
+      console.log('Unknown log type:', data.type);
   }
 
-  console.log("Current log counts:", {
+  console.log('Current log counts:', {
     consoleLogs: consoleLogs.length,
     consoleErrors: consoleErrors.length,
     networkErrors: networkErrors.length,
     networkSuccess: networkSuccess.length,
   });
-  console.log("=== End Extension Log ===\n");
+  console.log('=== End Extension Log ===\n');
 
-  res.json({ status: "ok" });
+  res.json({ status: 'ok' });
 });
 
 // Update GET endpoints to use the new function
-app.get("/console-logs", (req, res) => {
+app.get('/console-logs', (req, res) => {
   const truncatedLogs = truncateLogsToQueryLimit(consoleLogs);
   res.json(truncatedLogs);
 });
 
-app.get("/console-errors", (req, res) => {
+app.get('/console-errors', (req, res) => {
   const truncatedLogs = truncateLogsToQueryLimit(consoleErrors);
   res.json(truncatedLogs);
 });
 
-app.get("/network-errors", (req, res) => {
+app.get('/network-errors', (req, res) => {
   const truncatedLogs = truncateLogsToQueryLimit(networkErrors);
   res.json(truncatedLogs);
 });
 
-app.get("/network-success", (req, res) => {
+app.get('/network-success', (req, res) => {
   const truncatedLogs = truncateLogsToQueryLimit(networkSuccess);
   res.json(truncatedLogs);
 });
 
-app.get("/all-xhr", (req, res) => {
+app.get('/all-xhr', (req, res) => {
   // Merge and sort network success and error logs by timestamp
   const mergedLogs = [...networkSuccess, ...networkErrors].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -498,52 +501,52 @@ app.get("/all-xhr", (req, res) => {
 });
 
 // Add new endpoint for selected element
-app.post("/selected-element", (req, res) => {
+app.post('/selected-element', (req, res) => {
   const { data } = req.body;
   selectedElement = data;
-  res.json({ status: "ok" });
+  res.json({ status: 'ok' });
 });
 
-app.get("/selected-element", (req, res) => {
-  res.json(selectedElement || { message: "No element selected" });
+app.get('/selected-element', (req, res) => {
+  res.json(selectedElement || { message: 'No element selected' });
 });
 
-app.get("/.port", (req, res) => {
+app.get('/.port', (req, res) => {
   res.send(PORT.toString());
 });
 
 // Add new identity endpoint with a unique signature
-app.get("/.identity", (req, res) => {
+app.get('/.identity', (req, res) => {
   res.json({
     port: PORT,
-    name: "browser-tools-server",
-    version: "1.2.0",
-    signature: "mcp-browser-connector-24x7",
+    name: 'browser-tools-server',
+    version: '1.2.0',
+    signature: 'mcp-browser-connector-24x7',
   });
 });
 
 // Add function to clear all logs
 function clearAllLogs() {
-  console.log("Wiping all logs...");
+  console.log('Wiping all logs...');
   consoleLogs.length = 0;
   consoleErrors.length = 0;
   networkErrors.length = 0;
   networkSuccess.length = 0;
   allXhr.length = 0;
   selectedElement = null;
-  console.log("All logs have been wiped");
+  console.log('All logs have been wiped');
 }
 
 // Add endpoint to wipe logs
-app.post("/wipelogs", (req, res) => {
+app.post('/wipelogs', (req, res) => {
   clearAllLogs();
-  res.json({ status: "ok", message: "All logs cleared successfully" });
+  res.json({ status: 'ok', message: 'All logs cleared successfully' });
 });
 
 // Add endpoint for the extension to report the current URL
-app.post("/current-url", (req, res) => {
+app.post('/current-url', (req, res) => {
   console.log(
-    "Received current URL update request:",
+    'Received current URL update request:',
     JSON.stringify(req.body, null, 2)
   );
 
@@ -559,11 +562,11 @@ app.post("/current-url", (req, res) => {
     }
 
     // Log the source of the update if provided
-    const source = req.body.source || "unknown";
-    const tabId = req.body.tabId || "unknown";
+    const source = req.body.source || 'unknown';
+    const tabId = req.body.tabId || 'unknown';
     const timestamp = req.body.timestamp
       ? new Date(req.body.timestamp).toISOString()
-      : "unknown";
+      : 'unknown';
 
     console.log(
       `Updated current URL via dedicated endpoint: ${oldUrl} -> ${currentUrl}`
@@ -573,31 +576,23 @@ app.post("/current-url", (req, res) => {
     );
 
     res.json({
-      status: "ok",
+      status: 'ok',
       url: currentUrl,
       tabId: currentTabId,
       previousUrl: oldUrl,
       updated: oldUrl !== currentUrl,
     });
   } else {
-    console.log("No URL provided in current-url request");
-    res.status(400).json({ status: "error", message: "No URL provided" });
+    console.log('No URL provided in current-url request');
+    res.status(400).json({ status: 'error', message: 'No URL provided' });
   }
 });
 
 // Add endpoint to get the current URL
-app.get("/current-url", (req, res) => {
-  console.log("Current URL requested, returning:", currentUrl);
+app.get('/current-url', (req, res) => {
+  console.log('Current URL requested, returning:', currentUrl);
   res.json({ url: currentUrl });
 });
-
-interface ScreenshotMessage {
-  type: "screenshot-data" | "screenshot-error";
-  data?: string;
-  path?: string;
-  error?: string;
-  autoPaste?: boolean;
-}
 
 export class BrowserConnector {
   private wss: WebSocketServer;
@@ -613,19 +608,19 @@ export class BrowserConnector {
     // Initialize WebSocket server using the existing HTTP server
     this.wss = new WebSocketServer({
       noServer: true,
-      path: "/extension-ws",
+      path: '/extension-ws',
     });
 
     // Register the capture-screenshot endpoint
     this.app.post(
-      "/capture-screenshot",
+      '/capture-screenshot',
       async (req: express.Request, res: express.Response) => {
         console.log(
-          "Browser Connector: Received request to /capture-screenshot endpoint"
+          'Browser Connector: Received request to /capture-screenshot endpoint'
         );
-        console.log("Browser Connector: Request body:", req.body);
+        console.log('Browser Connector: Request body:', req.body);
         console.log(
-          "Browser Connector: Active WebSocket connection:",
+          'Browser Connector: Active WebSocket connection:',
           !!this.activeConnection
         );
         await this.captureScreenshot(req, res);
@@ -646,38 +641,38 @@ export class BrowserConnector {
 
     // Handle upgrade requests for WebSocket
     this.server.on(
-      "upgrade",
+      'upgrade',
       (request: IncomingMessage, socket: Socket, head: Buffer) => {
-        if (request.url === "/extension-ws") {
+        if (request.url === '/extension-ws') {
           this.wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-            this.wss.emit("connection", ws, request);
+            this.wss.emit('connection', ws, request);
           });
         }
       }
     );
 
-    this.wss.on("connection", (ws: WebSocket) => {
-      console.log("Chrome extension connected via WebSocket");
+    this.wss.on('connection', (ws: WebSocket) => {
+      console.log('Chrome extension connected via WebSocket');
       this.activeConnection = ws;
 
-      ws.on("message", (message: string | Buffer | ArrayBuffer | Buffer[]) => {
+      ws.on('message', (message: string | Buffer | ArrayBuffer | Buffer[]) => {
         try {
           const data = JSON.parse(message.toString());
           // Log message without the base64 data
-          console.log("Received WebSocket message:", {
+          console.log('Received WebSocket message:', {
             ...data,
-            data: data.data ? "[base64 data]" : undefined,
+            data: data.data ? '[base64 data]' : undefined,
           });
 
           // Handle URL response
-          if (data.type === "current-url-response" && data.url) {
-            console.log("Received current URL from browser:", data.url);
+          if (data.type === 'current-url-response' && data.url) {
+            console.log('Received current URL from browser:', data.url);
             currentUrl = data.url;
 
             // Also update the tab ID if provided
             if (data.tabId) {
               console.log(
-                "Updating tab ID from WebSocket message:",
+                'Updating tab ID from WebSocket message:',
                 data.tabId
               );
               currentTabId = data.tabId;
@@ -696,29 +691,29 @@ export class BrowserConnector {
           // Handle page navigation event via WebSocket
           // Note: This is intentionally duplicated from the HTTP handler in /extension-log
           // as the extension may send navigation events through either channel
-          if (data.type === "page-navigated" && data.url) {
-            console.log("Page navigated to:", data.url);
+          if (data.type === 'page-navigated' && data.url) {
+            console.log('Page navigated to:', data.url);
             currentUrl = data.url;
 
             // Also update the tab ID if provided
             if (data.tabId) {
               console.log(
-                "Updating tab ID from page navigation event:",
+                'Updating tab ID from page navigation event:',
                 data.tabId
               );
               currentTabId = data.tabId;
             }
           }
           // Handle screenshot response
-          if (data.type === "screenshot-data" && data.data) {
-            console.log("Received screenshot data");
-            console.log("Screenshot path from extension:", data.path);
-            console.log("Auto-paste setting from extension:", data.autoPaste);
+          if (data.type === 'screenshot-data' && data.data) {
+            console.log('Received screenshot data');
+            console.log('Screenshot path from extension:', data.path);
+            console.log('Auto-paste setting from extension:', data.autoPaste);
             // Get the most recent callback since we're not using requestId anymore
             const callbacks = Array.from(screenshotCallbacks.values());
             if (callbacks.length > 0) {
               const callback = callbacks[0];
-              console.log("Found callback, resolving promise");
+              console.log('Found callback, resolving promise');
               // Pass both the data, path and autoPaste to the resolver
               callback.resolve({
                 data: data.data,
@@ -727,30 +722,30 @@ export class BrowserConnector {
               });
               screenshotCallbacks.clear(); // Clear all callbacks
             } else {
-              console.log("No callbacks found for screenshot");
+              console.log('No callbacks found for screenshot');
             }
           }
           // Handle screenshot error
-          else if (data.type === "screenshot-error") {
-            console.log("Received screenshot error:", data.error);
+          else if (data.type === 'screenshot-error') {
+            console.log('Received screenshot error:', data.error);
             const callbacks = Array.from(screenshotCallbacks.values());
             if (callbacks.length > 0) {
               const callback = callbacks[0];
               callback.reject(
-                new Error(data.error || "Screenshot capture failed")
+                new Error(data.error || 'Screenshot capture failed')
               );
               screenshotCallbacks.clear(); // Clear all callbacks
             }
           } else {
-            console.log("Unhandled message type:", data.type);
+            console.log('Unhandled message type:', data.type);
           }
         } catch (error) {
-          console.error("Error processing WebSocket message:", error);
+          console.error('Error processing WebSocket message:', error);
         }
       });
 
-      ws.on("close", () => {
-        console.log("Chrome extension disconnected");
+      ws.on('close', () => {
+        console.log('Chrome extension disconnected');
         if (this.activeConnection === ws) {
           this.activeConnection = null;
         }
@@ -759,19 +754,19 @@ export class BrowserConnector {
 
     // Add screenshot endpoint
     this.app.post(
-      "/screenshot",
+      '/screenshot',
       (req: express.Request, res: express.Response): void => {
         console.log(
-          "Browser Connector: Received request to /screenshot endpoint"
+          'Browser Connector: Received request to /screenshot endpoint'
         );
-        console.log("Browser Connector: Request body:", req.body);
+        console.log('Browser Connector: Request body:', req.body);
         try {
-          console.log("Received screenshot capture request");
+          console.log('Received screenshot capture request');
           const { data, path: outputPath } = req.body;
 
           if (!data) {
-            console.log("Screenshot request missing data");
-            res.status(400).json({ error: "Missing screenshot data" });
+            console.log('Screenshot request missing data');
+            res.status(400).json({ error: 'Missing screenshot data' });
             return;
           }
 
@@ -780,32 +775,32 @@ export class BrowserConnector {
           console.log(`Using screenshot path: ${targetPath}`);
 
           // Remove the data:image/png;base64, prefix
-          const base64Data = data.replace(/^data:image\/png;base64,/, "");
+          const base64Data = data.replace(/^data:image\/png;base64,/, '');
 
           // Create the full directory path if it doesn't exist
           fs.mkdirSync(targetPath, { recursive: true });
           console.log(`Created/verified directory: ${targetPath}`);
 
           // Generate a unique filename using timestamp
-          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
           const filename = `screenshot-${timestamp}.png`;
           const fullPath = path.join(targetPath, filename);
           console.log(`Saving screenshot to: ${fullPath}`);
 
           // Write the file
-          fs.writeFileSync(fullPath, base64Data, "base64");
-          console.log("Screenshot saved successfully");
+          fs.writeFileSync(fullPath, base64Data, 'base64');
+          console.log('Screenshot saved successfully');
 
           res.json({
             path: fullPath,
             filename: filename,
           });
         } catch (error: unknown) {
-          console.error("Error saving screenshot:", error);
+          console.error('Error saving screenshot:', error);
           if (error instanceof Error) {
             res.status(500).json({ error: error.message });
           } else {
-            res.status(500).json({ error: "An unknown error occurred" });
+            res.status(500).json({ error: 'An unknown error occurred' });
           }
         }
       }
@@ -814,7 +809,7 @@ export class BrowserConnector {
 
   private async handleScreenshot(req: express.Request, res: express.Response) {
     if (!this.activeConnection) {
-      return res.status(503).json({ error: "Chrome extension not connected" });
+      return res.status(503).json({ error: 'Chrome extension not connected' });
     }
 
     try {
@@ -826,20 +821,20 @@ export class BrowserConnector {
           try {
             const response: ScreenshotMessage = JSON.parse(message.toString());
 
-            if (response.type === "screenshot-error") {
+            if (response.type === 'screenshot-error') {
               reject(new Error(response.error));
               return;
             }
 
             if (
-              response.type === "screenshot-data" &&
+              response.type === 'screenshot-data' &&
               response.data &&
               response.path
             ) {
               // Remove the data:image/png;base64, prefix
               const base64Data = response.data.replace(
                 /^data:image\/png;base64,/,
-                ""
+                ''
               );
 
               // Ensure the directory exists
@@ -847,12 +842,12 @@ export class BrowserConnector {
               fs.mkdirSync(dir, { recursive: true });
 
               // Generate a unique filename using timestamp
-              const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+              const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
               const filename = `screenshot-${timestamp}.png`;
               const fullPath = path.join(response.path, filename);
 
               // Write the file
-              fs.writeFileSync(fullPath, base64Data, "base64");
+              fs.writeFileSync(fullPath, base64Data, 'base64');
               resolve({
                 path: fullPath,
                 filename: filename,
@@ -861,22 +856,22 @@ export class BrowserConnector {
           } catch (error) {
             reject(error);
           } finally {
-            this.activeConnection?.removeListener("message", messageHandler);
+            this.activeConnection?.removeListener('message', messageHandler);
           }
         };
 
         // Add temporary message handler
-        this.activeConnection?.on("message", messageHandler);
+        this.activeConnection?.on('message', messageHandler);
 
         // Request screenshot
         this.activeConnection?.send(
-          JSON.stringify({ type: "take-screenshot" })
+          JSON.stringify({ type: 'take-screenshot' })
         );
 
         // Set timeout
         setTimeout(() => {
-          this.activeConnection?.removeListener("message", messageHandler);
-          reject(new Error("Screenshot timeout"));
+          this.activeConnection?.removeListener('message', messageHandler);
+          reject(new Error('Screenshot timeout'));
         }, 30000); // 30 second timeout
       });
 
@@ -885,7 +880,7 @@ export class BrowserConnector {
       if (error instanceof Error) {
         res.status(500).json({ error: error.message });
       } else {
-        res.status(500).json({ error: "An unknown error occurred" });
+        res.status(500).json({ error: 'An unknown error occurred' });
       }
     }
   }
@@ -893,16 +888,16 @@ export class BrowserConnector {
   // Updated method to get URL for audits with improved connection tracking and waiting
   private async getUrlForAudit(): Promise<string | null> {
     try {
-      console.log("getUrlForAudit called");
+      console.log('getUrlForAudit called');
 
       // Use the stored URL if available immediately
-      if (currentUrl && currentUrl !== "" && currentUrl !== "about:blank") {
+      if (currentUrl && currentUrl !== '' && currentUrl !== 'about:blank') {
         console.log(`Using existing URL immediately: ${currentUrl}`);
         return currentUrl;
       }
 
       // Wait for a URL to become available (retry loop)
-      console.log("No valid URL available yet, waiting for navigation...");
+      console.log('No valid URL available yet, waiting for navigation...');
 
       // Wait up to 10 seconds for a URL to be set (20 attempts x 500ms)
       const maxAttempts = 50;
@@ -910,7 +905,7 @@ export class BrowserConnector {
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         // Check if URL is available now
-        if (currentUrl && currentUrl !== "" && currentUrl !== "about:blank") {
+        if (currentUrl && currentUrl !== '' && currentUrl !== 'about:blank') {
           console.log(`URL became available after waiting: ${currentUrl}`);
           return currentUrl;
         }
@@ -923,10 +918,10 @@ export class BrowserConnector {
       }
 
       // If we reach here, no URL became available after waiting
-      console.log("Timed out waiting for URL, returning null");
+      console.log('Timed out waiting for URL, returning null');
       return null;
     } catch (error) {
-      console.error("Error in getUrlForAudit:", error);
+      console.error('Error in getUrlForAudit:', error);
       return null; // Return null to trigger an error
     }
   }
@@ -938,21 +933,21 @@ export class BrowserConnector {
 
   // Add new endpoint for programmatic screenshot capture
   async captureScreenshot(req: express.Request, res: express.Response) {
-    console.log("Browser Connector: Starting captureScreenshot method");
-    console.log("Browser Connector: Request headers:", req.headers);
-    console.log("Browser Connector: Request method:", req.method);
+    console.log('Browser Connector: Starting captureScreenshot method');
+    console.log('Browser Connector: Request headers:', req.headers);
+    console.log('Browser Connector: Request method:', req.method);
 
     if (!this.activeConnection) {
       console.log(
-        "Browser Connector: No active WebSocket connection to Chrome extension"
+        'Browser Connector: No active WebSocket connection to Chrome extension'
       );
-      return res.status(503).json({ error: "Chrome extension not connected" });
+      return res.status(503).json({ error: 'Chrome extension not connected' });
     }
 
     try {
-      console.log("Browser Connector: Starting screenshot capture...");
+      console.log('Browser Connector: Starting screenshot capture...');
       const requestId = Date.now().toString();
-      console.log("Browser Connector: Generated requestId:", requestId);
+      console.log('Browser Connector: Generated requestId:', requestId);
 
       // Create promise that will resolve when we get the screenshot data
       const screenshotPromise = new Promise<{
@@ -966,7 +961,7 @@ export class BrowserConnector {
         // Store callback in map
         screenshotCallbacks.set(requestId, { resolve, reject });
         console.log(
-          "Browser Connector: Current callbacks:",
+          'Browser Connector: Current callbacks:',
           Array.from(screenshotCallbacks.keys())
         );
 
@@ -979,7 +974,7 @@ export class BrowserConnector {
             screenshotCallbacks.delete(requestId);
             reject(
               new Error(
-                "Screenshot capture timed out - no response from Chrome extension"
+                'Screenshot capture timed out - no response from Chrome extension'
               )
             );
           }
@@ -988,7 +983,7 @@ export class BrowserConnector {
 
       // Send screenshot request to extension
       const message = JSON.stringify({
-        type: "take-screenshot",
+        type: 'take-screenshot',
         requestId: requestId,
       });
       console.log(
@@ -998,15 +993,15 @@ export class BrowserConnector {
       this.activeConnection.send(message);
 
       // Wait for screenshot data
-      console.log("Browser Connector: Waiting for screenshot data...");
+      console.log('Browser Connector: Waiting for screenshot data...');
       const {
         data: base64Data,
         path: customPath,
         autoPaste,
       } = await screenshotPromise;
-      console.log("Browser Connector: Received screenshot data, saving...");
-      console.log("Browser Connector: Custom path from extension:", customPath);
-      console.log("Browser Connector: Auto-paste setting:", autoPaste);
+      console.log('Browser Connector: Received screenshot data, saving...');
+      console.log('Browser Connector: Custom path from extension:', customPath);
+      console.log('Browser Connector: Auto-paste setting:', autoPaste);
 
       // Always prioritize the path from the Chrome extension
       let targetPath = customPath;
@@ -1023,7 +1018,7 @@ export class BrowserConnector {
       console.log(`Browser Connector: Using path: ${targetPath}`);
 
       if (!base64Data) {
-        throw new Error("No screenshot data received from Chrome extension");
+        throw new Error('No screenshot data received from Chrome extension');
       }
 
       try {
@@ -1041,17 +1036,17 @@ export class BrowserConnector {
         );
       }
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `screenshot-${timestamp}.png`;
       const fullPath = path.join(targetPath, filename);
       console.log(`Browser Connector: Full screenshot path: ${fullPath}`);
 
       // Remove the data:image/png;base64, prefix if present
-      const cleanBase64 = base64Data.replace(/^data:image\/png;base64,/, "");
+      const cleanBase64 = base64Data.replace(/^data:image\/png;base64,/, '');
 
       // Save the file
       try {
-        fs.writeFileSync(fullPath, cleanBase64, "base64");
+        fs.writeFileSync(fullPath, cleanBase64, 'base64');
         console.log(`Browser Connector: Screenshot saved to: ${fullPath}`);
       } catch (err) {
         console.error(
@@ -1066,9 +1061,9 @@ export class BrowserConnector {
       }
 
       // Check if running on macOS before executing AppleScript
-      if (os.platform() === "darwin" && autoPaste === true) {
+      if (os.platform() === 'darwin' && autoPaste === true) {
         console.log(
-          "Browser Connector: Running on macOS with auto-paste enabled, executing AppleScript to paste into Cursor"
+          'Browser Connector: Running on macOS with auto-paste enabled, executing AppleScript to paste into Cursor'
         );
 
         // Create the AppleScript to copy the image to clipboard and paste into Cursor
@@ -1220,7 +1215,7 @@ export class BrowserConnector {
           }
         });
       } else {
-        if (os.platform() === "darwin" && !autoPaste) {
+        if (os.platform() === 'darwin' && !autoPaste) {
           console.log(
             `Browser Connector: Running on macOS but auto-paste is disabled, skipping AppleScript execution`
           );
@@ -1239,7 +1234,7 @@ export class BrowserConnector {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       console.error(
-        "Browser Connector: Error capturing screenshot:",
+        'Browser Connector: Error capturing screenshot:',
         errorMessage
       );
       res.status(500).json({
@@ -1251,26 +1246,26 @@ export class BrowserConnector {
   // Add shutdown method
   public shutdown() {
     return new Promise<void>((resolve) => {
-      console.log("Shutting down WebSocket server...");
+      console.log('Shutting down WebSocket server...');
 
       // Send close message to client if connection is active
       if (
         this.activeConnection &&
         this.activeConnection.readyState === WebSocket.OPEN
       ) {
-        console.log("Notifying client to close connection...");
+        console.log('Notifying client to close connection...');
         try {
           this.activeConnection.send(
-            JSON.stringify({ type: "server-shutdown" })
+            JSON.stringify({ type: 'server-shutdown' })
           );
         } catch (err) {
-          console.error("Error sending shutdown message to client:", err);
+          console.error('Error sending shutdown message to client:', err);
         }
       }
 
       // Set a timeout to force close after 2 seconds
       const forceCloseTimeout = setTimeout(() => {
-        console.log("Force closing connections after timeout...");
+        console.log('Force closing connections after timeout...');
         if (this.activeConnection) {
           this.activeConnection.terminate(); // Force close the connection
           this.activeConnection = null;
@@ -1281,14 +1276,14 @@ export class BrowserConnector {
 
       // Close active WebSocket connection if exists
       if (this.activeConnection) {
-        this.activeConnection.close(1000, "Server shutting down");
+        this.activeConnection.close(1000, 'Server shutting down');
         this.activeConnection = null;
       }
 
       // Close WebSocket server
       this.wss.close(() => {
         clearTimeout(forceCloseTimeout);
-        console.log("WebSocket server closed gracefully");
+        console.log('WebSocket server closed gracefully');
         resolve();
       });
     });
@@ -1298,7 +1293,7 @@ export class BrowserConnector {
   private setupAccessibilityAudit() {
     this.setupAuditEndpoint(
       AuditCategory.ACCESSIBILITY,
-      "/accessibility-audit",
+      '/accessibility-audit',
       runAccessibilityAudit
     );
   }
@@ -1307,21 +1302,21 @@ export class BrowserConnector {
   private setupPerformanceAudit() {
     this.setupAuditEndpoint(
       AuditCategory.PERFORMANCE,
-      "/performance-audit",
+      '/performance-audit',
       runPerformanceAudit
     );
   }
 
   // Set up SEO audit endpoint
   private setupSEOAudit() {
-    this.setupAuditEndpoint(AuditCategory.SEO, "/seo-audit", runSEOAudit);
+    this.setupAuditEndpoint(AuditCategory.SEO, '/seo-audit', runSEOAudit);
   }
 
   // Add a setup method for Best Practices audit
   private setupBestPracticesAudit() {
     this.setupAuditEndpoint(
       AuditCategory.BEST_PRACTICES,
-      "/best-practices-audit",
+      '/best-practices-audit',
       runBestPracticesAudit
     );
   }
@@ -1338,10 +1333,10 @@ export class BrowserConnector {
     auditFunction: (url: string) => Promise<LighthouseReport>
   ) {
     // Add server identity validation endpoint
-    this.app.get("/.identity", (req, res) => {
+    this.app.get('/.identity', (req, res) => {
       res.json({
-        signature: "mcp-browser-connector-24x7",
-        version: "1.2.0",
+        signature: 'mcp-browser-connector-24x7',
+        version: '1.2.0',
       });
     });
 
@@ -1365,7 +1360,7 @@ export class BrowserConnector {
         }
 
         // Check if we're using the default URL
-        if (url === "about:blank") {
+        if (url === 'about:blank') {
           console.log(`Cannot run ${auditType} audit on about:blank`);
           return res.status(400).json({
             error: `Cannot run ${auditType} audit on about:blank`,
@@ -1439,13 +1434,13 @@ export class BrowserConnector {
 
       // Log all available network interfaces for easier discovery
       const networkInterfaces = os.networkInterfaces();
-      console.log("\nAvailable on the following network addresses:");
+      console.log('\nAvailable on the following network addresses:');
 
       Object.keys(networkInterfaces).forEach((interfaceName) => {
         const interfaces = networkInterfaces[interfaceName];
         if (interfaces) {
           interfaces.forEach((iface) => {
-            if (!iface.internal && iface.family === "IPv4") {
+            if (!iface.internal && iface.family === 'IPv4') {
               console.log(`  - http://${iface.address}:${PORT}`);
             }
           });
@@ -1456,8 +1451,8 @@ export class BrowserConnector {
     });
 
     // Handle server startup errors
-    server.on("error", (err: any) => {
-      if (err.code === "EADDRINUSE") {
+    server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
         console.error(
           `ERROR: Port ${PORT} is still in use, despite our checks!`
         );
@@ -1474,8 +1469,8 @@ export class BrowserConnector {
     const browserConnector = new BrowserConnector(app, server);
 
     // Handle shutdown gracefully with improved error handling
-    process.on("SIGINT", async () => {
-      console.log("\nReceived SIGINT signal. Starting graceful shutdown...");
+    process.on('SIGINT', async () => {
+      console.log('\nReceived SIGINT signal. Starting graceful shutdown...');
 
       try {
         // First shutdown WebSocket connections
@@ -1485,10 +1480,10 @@ export class BrowserConnector {
         await new Promise<void>((resolve, reject) => {
           server.close((err) => {
             if (err) {
-              console.error("Error closing HTTP server:", err);
+              console.error('Error closing HTTP server:', err);
               reject(err);
             } else {
-              console.log("HTTP server closed successfully");
+              console.log('HTTP server closed successfully');
               resolve();
             }
           });
@@ -1497,25 +1492,25 @@ export class BrowserConnector {
         // Clear all logs
         clearAllLogs();
 
-        console.log("Shutdown completed successfully");
+        console.log('Shutdown completed successfully');
         process.exit(0);
       } catch (error) {
-        console.error("Error during shutdown:", error);
+        console.error('Error during shutdown:', error);
         // Force exit in case of error
         process.exit(1);
       }
     });
 
     // Also handle SIGTERM
-    process.on("SIGTERM", () => {
-      console.log("\nReceived SIGTERM signal");
-      process.emit("SIGINT");
+    process.on('SIGTERM', () => {
+      console.log('\nReceived SIGTERM signal');
+      process.emit('SIGINT');
     });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   }
 })().catch((err) => {
-  console.error("Unhandled error during server startup:", err);
+  console.error('Unhandled error during server startup:', err);
   process.exit(1);
 });

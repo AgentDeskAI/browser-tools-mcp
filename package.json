@@ -1,0 +1,63 @@
+{
+  "name": "browser-tools-mcp",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser tools for Model Context Protocol",
+  "scripts": {
+    "build": "pnpm -r build",
+    "start": "pnpm --filter @agentdeskai/browser-tools-server start",
+    "dev": "pnpm --parallel -r dev",
+    "clean": "pnpm -r clean",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "prepare": "husky install",
+    "type-check": "pnpm -r type-check",
+    "watch": "pnpm --filter @agentdeskai/browser-tools-extension watch"
+  },
+  "keywords": [
+    "browser",
+    "tools",
+    "mcp",
+    "debugging"
+  ],
+  "author": "AgentDesk AI",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.4.1",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "llm-cost": "^1.0.5",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.4.3",
+    "@commitlint/config-conventional": "^18.4.3",
+    "@types/body-parser": "^1.19.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.1",
+    "@types/node-fetch": "^2.6.11",
+    "@types/ws": "^8.5.14",
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.1",
+    "typescript": "^5.7.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  }
+}
