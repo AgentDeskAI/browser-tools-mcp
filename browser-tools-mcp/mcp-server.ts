@@ -11,6 +11,31 @@ const server = new McpServer({
   version: "1.2.0",
 });
 
+let toolsToUse = [
+  "getConsoleLogs",
+  "getConsoleErrors",
+  "getNetworkErrors",
+  "getNetworkLogs",
+  "takeScreenshot",
+  "getSelectedElement",
+  "wipeLogs",
+  "runAccessibilityAudit",
+  "runPerformanceAudit",
+  "runSEOAudit",
+  "runNextJSAudit",
+  "runDebuggerMode",
+  "runAuditMode",
+  "runBestPracticesAudit",
+];
+
+if (process.argv.length > 2) {
+  toolsToUse = toolsToUse.filter((tool) => {
+    return process.argv.slice(2).some((arg) => arg.includes(tool));
+  });
+}
+
+console.log("Tools to use:", toolsToUse);
+
 // Track the discovered server connection
 let discoveredHost = "127.0.0.1";
 let discoveredPort = 3025;
@@ -175,30 +200,11 @@ async function withServerConnection<T>(
 }
 
 // We'll define our tools that retrieve data from the browser connector
-server.tool("getConsoleLogs", "Check our browser logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/console-logs`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-    };
-  });
-});
-
-server.tool(
-  "getConsoleErrors",
-  "Check our browsers console errors",
-  async () => {
+if (toolsToUse.includes("getConsoleLogs")) {
+  server.tool("getConsoleLogs", "Check our browser logs", async () => {
     return await withServerConnection(async () => {
       const response = await fetch(
-        `http://${discoveredHost}:${discoveredPort}/console-errors`
+        `http://${discoveredHost}:${discoveredPort}/console-logs`
       );
       const json = await response.json();
       return {
@@ -210,101 +216,57 @@ server.tool(
         ],
       };
     });
-  }
-);
-
-server.tool("getNetworkErrors", "Check our network ERROR logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/network-errors`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-      isError: true,
-    };
   });
-});
+}
 
-server.tool("getNetworkLogs", "Check ALL our network logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/network-success`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-    };
-  });
-});
-
-server.tool(
-  "takeScreenshot",
-  "Take a screenshot of the current browser tab",
-  async () => {
-    return await withServerConnection(async () => {
-      try {
+if (toolsToUse.includes("getConsoleErrors")) {
+  server.tool(
+    "getConsoleErrors",
+    "Check our browsers console errors",
+    async () => {
+      return await withServerConnection(async () => {
         const response = await fetch(
-          `http://${discoveredHost}:${discoveredPort}/capture-screenshot`,
-          {
-            method: "POST",
-          }
+          `http://${discoveredHost}:${discoveredPort}/console-errors`
         );
-
-        const result = await response.json();
-
-        if (response.ok) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Successfully saved screenshot",
-              },
-            ],
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error taking screenshot: ${result.error}`,
-              },
-            ],
-          };
-        }
-      } catch (error: any) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+        const json = await response.json();
         return {
           content: [
             {
               type: "text",
-              text: `Failed to take screenshot: ${errorMessage}`,
+              text: JSON.stringify(json, null, 2),
             },
           ],
         };
-      }
-    });
-  }
-);
+      });
+    }
+  );
+}
 
-server.tool(
-  "getSelectedElement",
-  "Get the selected element from the browser",
-  async () => {
+if (toolsToUse.includes("getNetworkErrors")) {
+  server.tool("getNetworkErrors", "Check our network ERROR logs", async () => {
     return await withServerConnection(async () => {
       const response = await fetch(
-        `http://${discoveredHost}:${discoveredPort}/selected-element`
+        `http://${discoveredHost}:${discoveredPort}/network-errors`
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    });
+  });
+}
+
+if (toolsToUse.includes("getNetworkLogs")) {
+  server.tool("getNetworkLogs", "Check ALL our network logs", async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/network-success`
       );
       const json = await response.json();
       return {
@@ -316,28 +278,105 @@ server.tool(
         ],
       };
     });
-  }
-);
-
-server.tool("wipeLogs", "Wipe all browser logs from memory", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/wipelogs`,
-      {
-        method: "POST",
-      }
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: json.message,
-        },
-      ],
-    };
   });
-});
+}
+
+if (toolsToUse.includes("takeScreenshot")) {
+  server.tool(
+    "takeScreenshot",
+    "Take a screenshot of the current browser tab",
+    async () => {
+      return await withServerConnection(async () => {
+        try {
+          const response = await fetch(
+            `http://${discoveredHost}:${discoveredPort}/capture-screenshot`,
+            {
+              method: "POST",
+            }
+          );
+
+          const result = await response.json();
+
+          if (response.ok) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Successfully saved screenshot",
+                },
+              ],
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Error taking screenshot: ${result.error}`,
+                },
+              ],
+            };
+          }
+        } catch (error: any) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to take screenshot: ${errorMessage}`,
+              },
+            ],
+          };
+        }
+      });
+    }
+  );
+}
+
+if (toolsToUse.includes("getSelectedElement")) {
+  server.tool(
+    "getSelectedElement",
+    "Get the selected element from the browser",
+    async () => {
+      return await withServerConnection(async () => {
+        const response = await fetch(
+          `http://${discoveredHost}:${discoveredPort}/selected-element`
+        );
+        const json = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(json, null, 2),
+            },
+          ],
+        };
+      });
+    }
+  );
+}
+
+if (toolsToUse.includes("wipeLogs")) {
+  server.tool("wipeLogs", "Wipe all browser logs from memory", async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/wipelogs`,
+        {
+          method: "POST",
+        }
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: json.message,
+          },
+        ],
+      };
+    });
+  });
+}
 
 // Define audit categories as enum to match the server's AuditCategory enum
 enum AuditCategory {
@@ -349,145 +388,216 @@ enum AuditCategory {
 }
 
 // Add tool for accessibility audits, launches a headless browser instance
-server.tool(
-  "runAccessibilityAudit",
-  "Run an accessibility audit on the current page",
-  {},
-  async () => {
-    return await withServerConnection(async () => {
-      try {
-        // Simplified approach - let the browser connector handle the current tab and URL
-        console.log(
-          `Sending POST request to http://${discoveredHost}:${discoveredPort}/accessibility-audit`
-        );
-        const response = await fetch(
-          `http://${discoveredHost}:${discoveredPort}/accessibility-audit`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              category: AuditCategory.ACCESSIBILITY,
-              source: "mcp_tool",
-              timestamp: Date.now(),
-            }),
-          }
-        );
-
-        // Log the response status
-        console.log(`Accessibility audit response status: ${response.status}`);
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`Accessibility audit error: ${errorText}`);
-          throw new Error(`Server returned ${response.status}: ${errorText}`);
-        }
-
-        const json = await response.json();
-
-        // flatten it by merging metadata with the report contents
-        if (json.report) {
-          const { metadata, report } = json;
-          const flattened = {
-            ...metadata,
-            ...report,
-          };
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(flattened, null, 2),
-              },
-            ],
-          };
-        } else {
-          // Return as-is if it's not in the new format
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(json, null, 2),
-              },
-            ],
-          };
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error("Error in accessibility audit:", errorMessage);
-        return {
-          content: [
+if (toolsToUse.includes("runAccessibilityAudit")) {
+  server.tool(
+    "runAccessibilityAudit",
+    "Run an accessibility audit on the current page",
+    {},
+    async () => {
+      return await withServerConnection(async () => {
+        try {
+          // Simplified approach - let the browser connector handle the current tab and URL
+          console.log(
+            `Sending POST request to http://${discoveredHost}:${discoveredPort}/accessibility-audit`
+          );
+          const response = await fetch(
+            `http://${discoveredHost}:${discoveredPort}/accessibility-audit`,
             {
-              type: "text",
-              text: `Failed to run accessibility audit: ${errorMessage}`,
-            },
-          ],
-        };
-      }
-    });
-  }
-);
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                category: AuditCategory.ACCESSIBILITY,
+                source: "mcp_tool",
+                timestamp: Date.now(),
+              }),
+            }
+          );
+
+          // Log the response status
+          console.log(
+            `Accessibility audit response status: ${response.status}`
+          );
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Accessibility audit error: ${errorText}`);
+            throw new Error(`Server returned ${response.status}: ${errorText}`);
+          }
+
+          const json = await response.json();
+
+          // flatten it by merging metadata with the report contents
+          if (json.report) {
+            const { metadata, report } = json;
+            const flattened = {
+              ...metadata,
+              ...report,
+            };
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(flattened, null, 2),
+                },
+              ],
+            };
+          } else {
+            // Return as-is if it's not in the new format
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(json, null, 2),
+                },
+              ],
+            };
+          }
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.error("Error in accessibility audit:", errorMessage);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to run accessibility audit: ${errorMessage}`,
+              },
+            ],
+          };
+        }
+      });
+    }
+  );
+}
 
 // Add tool for performance audits, launches a headless browser instance
-server.tool(
-  "runPerformanceAudit",
-  "Run a performance audit on the current page",
-  {},
-  async () => {
-    return await withServerConnection(async () => {
-      try {
-        // Simplified approach - let the browser connector handle the current tab and URL
-        console.log(
-          `Sending POST request to http://${discoveredHost}:${discoveredPort}/performance-audit`
-        );
-        const response = await fetch(
-          `http://${discoveredHost}:${discoveredPort}/performance-audit`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              category: AuditCategory.PERFORMANCE,
-              source: "mcp_tool",
-              timestamp: Date.now(),
-            }),
+if (toolsToUse.includes("runPerformanceAudit")) {
+  server.tool(
+    "runPerformanceAudit",
+    "Run a performance audit on the current page",
+    {},
+    async () => {
+      return await withServerConnection(async () => {
+        try {
+          // Simplified approach - let the browser connector handle the current tab and URL
+          console.log(
+            `Sending POST request to http://${discoveredHost}:${discoveredPort}/performance-audit`
+          );
+          const response = await fetch(
+            `http://${discoveredHost}:${discoveredPort}/performance-audit`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                category: AuditCategory.PERFORMANCE,
+                source: "mcp_tool",
+                timestamp: Date.now(),
+              }),
+            }
+          );
+
+          // Log the response status
+          console.log(`Performance audit response status: ${response.status}`);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Performance audit error: ${errorText}`);
+            throw new Error(`Server returned ${response.status}: ${errorText}`);
           }
-        );
 
-        // Log the response status
-        console.log(`Performance audit response status: ${response.status}`);
+          const json = await response.json();
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`Performance audit error: ${errorText}`);
-          throw new Error(`Server returned ${response.status}: ${errorText}`);
-        }
+          // flatten it by merging metadata with the report contents
+          if (json.report) {
+            const { metadata, report } = json;
+            const flattened = {
+              ...metadata,
+              ...report,
+            };
 
-        const json = await response.json();
-
-        // flatten it by merging metadata with the report contents
-        if (json.report) {
-          const { metadata, report } = json;
-          const flattened = {
-            ...metadata,
-            ...report,
-          };
-
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(flattened, null, 2),
+                },
+              ],
+            };
+          } else {
+            // Return as-is if it's not in the new format
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(json, null, 2),
+                },
+              ],
+            };
+          }
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.error("Error in performance audit:", errorMessage);
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(flattened, null, 2),
+                text: `Failed to run performance audit: ${errorMessage}`,
               },
             ],
           };
-        } else {
-          // Return as-is if it's not in the new format
+        }
+      });
+    }
+  );
+}
+
+// Add tool for SEO audits, launches a headless browser instance
+if (toolsToUse.includes("runSEOAudit")) {
+  server.tool(
+    "runSEOAudit",
+    "Run an SEO audit on the current page",
+    {},
+    async () => {
+      return await withServerConnection(async () => {
+        try {
+          console.log(
+            `Sending POST request to http://${discoveredHost}:${discoveredPort}/seo-audit`
+          );
+          const response = await fetch(
+            `http://${discoveredHost}:${discoveredPort}/seo-audit`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                category: AuditCategory.SEO,
+                source: "mcp_tool",
+                timestamp: Date.now(),
+              }),
+            }
+          );
+
+          // Log the response status
+          console.log(`SEO audit response status: ${response.status}`);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`SEO audit error: ${errorText}`);
+            throw new Error(`Server returned ${response.status}: ${errorText}`);
+          }
+
+          const json = await response.json();
+
           return {
             content: [
               {
@@ -496,92 +606,30 @@ server.tool(
               },
             ],
           };
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.error("Error in SEO audit:", errorMessage);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to run SEO audit: ${errorMessage}`,
+              },
+            ],
+          };
         }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error("Error in performance audit:", errorMessage);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to run performance audit: ${errorMessage}`,
-            },
-          ],
-        };
-      }
-    });
-  }
-);
+      });
+    }
+  );
+}
 
-// Add tool for SEO audits, launches a headless browser instance
-server.tool(
-  "runSEOAudit",
-  "Run an SEO audit on the current page",
-  {},
-  async () => {
-    return await withServerConnection(async () => {
-      try {
-        console.log(
-          `Sending POST request to http://${discoveredHost}:${discoveredPort}/seo-audit`
-        );
-        const response = await fetch(
-          `http://${discoveredHost}:${discoveredPort}/seo-audit`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              category: AuditCategory.SEO,
-              source: "mcp_tool",
-              timestamp: Date.now(),
-            }),
-          }
-        );
-
-        // Log the response status
-        console.log(`SEO audit response status: ${response.status}`);
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`SEO audit error: ${errorText}`);
-          throw new Error(`Server returned ${response.status}: ${errorText}`);
-        }
-
-        const json = await response.json();
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(json, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error("Error in SEO audit:", errorMessage);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to run SEO audit: ${errorMessage}`,
-            },
-          ],
-        };
-      }
-    });
-  }
-);
-
-server.tool("runNextJSAudit", {}, async () => ({
-  content: [
-    {
-      type: "text",
-      text: `
+if (toolsToUse.includes("runNextJSAudit")) {
+  server.tool("runNextJSAudit", {}, async () => ({
+    content: [
+      {
+        type: "text",
+        text: `
       You are an expert in SEO and web development with NextJS. Given the following procedures for analyzing my codebase, please perform a comprehensive - page by page analysis of our NextJS application to identify any issues or areas of improvement for SEO.
 
       After each iteration of changes, reinvoke this tool to re-fetch our SEO audit procedures and then scan our codebase again to identify additional areas of improvement. 
@@ -1280,18 +1328,20 @@ server.tool("runNextJSAudit", {}, async () => ({
       If feedback is provided, adjust the plan accordingly and ask for approval again.
       If the user approves of the plan, go ahead and proceed to implement all the necessary code changes to completely optimize our application.
     `,
-    },
-  ],
-}));
+      },
+    ],
+  }));
+}
 
-server.tool(
-  "runDebuggerMode",
-  "Run debugger mode to debug an issue in our application",
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: `
+if (toolsToUse.includes("runDebuggerMode")) {
+  server.tool(
+    "runDebuggerMode",
+    "Run debugger mode to debug an issue in our application",
+    async () => ({
+      content: [
+        {
+          type: "text",
+          text: `
       Please follow this exact sequence to debug an issue in our application:
   
   1. Reflect on 5-7 different possible sources of the problem
@@ -1305,19 +1355,21 @@ server.tool(
 
   Note: DO NOT run any of our audits (runAccessibilityAudit, runPerformanceAudit, runBestPracticesAudit, runSEOAudit, runNextJSAudit) when in debugging mode unless explicitly asked to do so or unless you switch to audit mode.
 `,
-      },
-    ],
-  })
-);
+        },
+      ],
+    })
+  );
+}
 
-server.tool(
-  "runAuditMode",
-  "Run audit mode to optimize our application for SEO, accessibility and performance",
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: `
+if (toolsToUse.includes("runAuditMode")) {
+  server.tool(
+    "runAuditMode",
+    "Run audit mode to optimize our application for SEO, accessibility and performance",
+    async () => ({
+      content: [
+        {
+          type: "text",
+          text: `
       I want you to enter "Audit Mode". Use the following MCP tools one after the other in this exact sequence:
       
       1. runAccessibilityAudit
@@ -1341,88 +1393,91 @@ server.tool(
       Keep repeating / iterating through this process with the four tools until our application is as optimized as possible for SEO, accessibility and performance.
 
 `,
-      },
-    ],
-  })
-);
+        },
+      ],
+    })
+  );
+}
 
 // Add tool for Best Practices audits, launches a headless browser instance
-server.tool(
-  "runBestPracticesAudit",
-  "Run a best practices audit on the current page",
-  {},
-  async () => {
-    return await withServerConnection(async () => {
-      try {
-        console.log(
-          `Sending POST request to http://${discoveredHost}:${discoveredPort}/best-practices-audit`
-        );
-        const response = await fetch(
-          `http://${discoveredHost}:${discoveredPort}/best-practices-audit`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              source: "mcp_tool",
-              timestamp: Date.now(),
-            }),
-          }
-        );
-
-        // Check for errors
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Server returned ${response.status}: ${errorText}`);
-        }
-
-        const json = await response.json();
-
-        // flatten it by merging metadata with the report contents
-        if (json.report) {
-          const { metadata, report } = json;
-          const flattened = {
-            ...metadata,
-            ...report,
-          };
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(flattened, null, 2),
-              },
-            ],
-          };
-        } else {
-          // Return as-is if it's not in the new format
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(json, null, 2),
-              },
-            ],
-          };
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error("Error in Best Practices audit:", errorMessage);
-        return {
-          content: [
+if (toolsToUse.includes("runBestPracticesAudit")) {
+  server.tool(
+    "runBestPracticesAudit",
+    "Run a best practices audit on the current page",
+    {},
+    async () => {
+      return await withServerConnection(async () => {
+        try {
+          console.log(
+            `Sending POST request to http://${discoveredHost}:${discoveredPort}/best-practices-audit`
+          );
+          const response = await fetch(
+            `http://${discoveredHost}:${discoveredPort}/best-practices-audit`,
             {
-              type: "text",
-              text: `Failed to run Best Practices audit: ${errorMessage}`,
-            },
-          ],
-        };
-      }
-    });
-  }
-);
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                source: "mcp_tool",
+                timestamp: Date.now(),
+              }),
+            }
+          );
+
+          // Check for errors
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Server returned ${response.status}: ${errorText}`);
+          }
+
+          const json = await response.json();
+
+          // flatten it by merging metadata with the report contents
+          if (json.report) {
+            const { metadata, report } = json;
+            const flattened = {
+              ...metadata,
+              ...report,
+            };
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(flattened, null, 2),
+                },
+              ],
+            };
+          } else {
+            // Return as-is if it's not in the new format
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(json, null, 2),
+                },
+              ],
+            };
+          }
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          console.error("Error in Best Practices audit:", errorMessage);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to run Best Practices audit: ${errorMessage}`,
+              },
+            ],
+          };
+        }
+      });
+    }
+  );
+}
 
 // Start receiving messages on stdio
 (async () => {
