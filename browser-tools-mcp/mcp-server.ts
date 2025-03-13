@@ -11,7 +11,58 @@ const server = new McpServer({
   version: "1.2.0",
 });
 
-let toolsToUse = [
+// Define types for tool mapping
+type ToolName =
+  | "getConsoleLogs"
+  | "getConsoleErrors"
+  | "getNetworkErrors"
+  | "getNetworkLogs"
+  | "takeScreenshot"
+  | "getSelectedElement"
+  | "wipeLogs"
+  | "runAccessibilityAudit"
+  | "runPerformanceAudit"
+  | "runSEOAudit"
+  | "runNextJSAudit"
+  | "runDebuggerMode"
+  | "runAuditMode"
+  | "runBestPracticesAudit";
+
+type ArgName =
+  | "console-logs"
+  | "console-errors"
+  | "network-errors"
+  | "network-logs"
+  | "screenshot"
+  | "selected-element"
+  | "wipe-logs"
+  | "accessibility-audit"
+  | "performance-audit"
+  | "seo-audit"
+  | "nextjs-audit"
+  | "debugger-mode"
+  | "audit-mode"
+  | "best-practices-audit";
+
+// Map from argument names to tool names
+const toolMapping: Record<ArgName, ToolName> = {
+  "console-logs": "getConsoleLogs",
+  "console-errors": "getConsoleErrors",
+  "network-errors": "getNetworkErrors",
+  "network-logs": "getNetworkLogs",
+  screenshot: "takeScreenshot",
+  "selected-element": "getSelectedElement",
+  "wipe-logs": "wipeLogs",
+  "accessibility-audit": "runAccessibilityAudit",
+  "performance-audit": "runPerformanceAudit",
+  "seo-audit": "runSEOAudit",
+  "nextjs-audit": "runNextJSAudit",
+  "debugger-mode": "runDebuggerMode",
+  "audit-mode": "runAuditMode",
+  "best-practices-audit": "runBestPracticesAudit",
+};
+
+let toolsToUse: ToolName[] = [
   "getConsoleLogs",
   "getConsoleErrors",
   "getNetworkErrors",
@@ -28,10 +79,47 @@ let toolsToUse = [
   "runBestPracticesAudit",
 ];
 
+// Function to validate argument name
+function isValidArgName(name: string): name is ArgName {
+  return name in toolMapping;
+}
+
+// Parse command line arguments for tool filtering
 if (process.argv.length > 2) {
-  toolsToUse = toolsToUse.filter((tool) => {
-    return process.argv.slice(2).some((arg) => arg.includes(tool));
-  });
+  const args = process.argv.slice(2);
+  const onlyArgs = args.filter((arg) => arg.startsWith("--only-"));
+  const noArgs = args.filter((arg) => arg.startsWith("--no-"));
+
+  // Validate that we don't have both --only and --no arguments
+  if (onlyArgs.length > 0 && noArgs.length > 0) {
+    console.error("Error: Cannot mix --only and --no arguments");
+  }
+
+  if (onlyArgs.length > 0) {
+    console.log("'--only' args:", onlyArgs);
+    // Build up from empty - only include specified tools
+    const requestedTools = onlyArgs.map((arg) => {
+      const argName = arg.replace("--only-", "");
+      if (!isValidArgName(argName)) {
+        console.error(`Unknown toolz: ${argName}`);
+        return;
+      }
+      return toolMapping[argName];
+    });
+    toolsToUse = toolsToUse.filter((tool) => requestedTools.includes(tool));
+  } else if (noArgs.length > 0) {
+    console.log("'--no' args:", noArgs);
+    // Subtract from full set - exclude specified tools
+    const excludedTools = noArgs.map((arg) => {
+      const argName = arg.replace("--no-", "");
+      if (!isValidArgName(argName)) {
+        console.error(`Unknown tool: ${argName}`);
+        return;
+      }
+      return toolMapping[argName];
+    });
+    toolsToUse = toolsToUse.filter((tool) => !excludedTools.includes(tool));
+  }
 }
 
 console.log("Tools to use:", toolsToUse);
