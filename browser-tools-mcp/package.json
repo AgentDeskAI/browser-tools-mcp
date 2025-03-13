@@ -25,23 +25,5 @@
     "extension"
   ],
   "author": "AgentDesk AI",
-  "license": "MIT",
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.4.1",
-    "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "llm-cost": "^1.0.5",
-    "node-fetch": "^2.7.0",
-    "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "@types/ws": "^8.5.14",
-    "@types/body-parser": "^1.19.5",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.13.1",
-    "@types/node-fetch": "^2.6.11",
-    "typescript": "^5.7.3"
-  }
+  "license": "MIT"
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@agentdeskai/browser-tools-extension",
+  "version": "1.2.0",
+  "description": "Chrome extension for browser tools",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.262"
+  }
+}

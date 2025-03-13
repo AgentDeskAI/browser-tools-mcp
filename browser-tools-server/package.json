@@ -24,27 +24,13 @@
   "author": "AgentDesk AI",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.4.1",
-    "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
     "lighthouse": "^11.6.0",
-    "llm-cost": "^1.0.5",
-    "node-fetch": "^2.7.0",
-    "puppeteer-core": "^22.4.1",
-    "ws": "^8.18.0"
+    "puppeteer-core": "^22.4.1"
   },
   "optionalDependencies": {
     "chrome-launcher": "^1.1.2"
   },
   "devDependencies": {
-    "@types/ws": "^8.5.14",
-    "@types/body-parser": "^1.19.5",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.13.1",
-    "@types/node-fetch": "^2.6.11",
-    "@types/puppeteer-core": "^7.0.4",
-    "typescript": "^5.7.3"
+    "@types/puppeteer-core": "^7.0.4"
   }
 }
