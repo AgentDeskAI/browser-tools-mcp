@@ -584,7 +584,7 @@ server.tool("runNextJSAudit", {}, async () => ({
       text: `
       You are an expert in SEO and web development with NextJS. Given the following procedures for analyzing my codebase, please perform a comprehensive - page by page analysis of our NextJS application to identify any issues or areas of improvement for SEO.
 
-      After each iteration of changes, reinvoke this tool to re-fetch our SEO audit procedures and then scan our codebase again to identify additional areas of improvement. 
+      After each iteration of changes, reinvoke this tool to re-fetch our SEO audit procedures and then scan our codebase again to identify additional areas of improvement.
 
       When no more areas of improvement are found, return "No more areas of improvement found, your NextJS application is optimized for SEO!".
 
@@ -706,7 +706,7 @@ server.tool("runNextJSAudit", {}, async () => ({
             initialScale: 1,
             themeColor: "#ffffff"
           };
-          
+
           export const metadata: Metadata = {
             metadataBase: new URL("https://dminhvu.com"),
             openGraph: {
@@ -835,25 +835,25 @@ server.tool("runNextJSAudit", {}, async () => ({
         type Params = {
           slug: string;
         };
-        
+
         type Props = {
           params: Params;
           searchParams: { [key: string]: string | string[] | undefined };
         };
-        
+
         export async function generateMetadata(
           { params, searchParams }: Props,
           parent: ResolvingMetadata
         ): Promise<Metadata> {
           const { slug } = params;
-        
+
           const post: Post = await fetch("YOUR_ENDPOINT", {
             method: "GET",
             next: {
               revalidate: 60 * 60 * 24
             }
           }).then((res) => res.json());
-        
+
           return {
             title: "{post.title} | dminhvu",
             authors: [
@@ -903,7 +903,7 @@ server.tool("runNextJSAudit", {}, async () => ({
           };
         }
 
-        
+
       2. JSON-LD Schema
 
       JSON-LD is a format for structured data that can be used by search engines to understand your content. For example, you can use it to describe a person, an event, an organization, a movie, a book, a recipe, and many other types of entities.
@@ -912,7 +912,7 @@ server.tool("runNextJSAudit", {}, async () => ({
       export default async function Page({ params }) {
         const { id } = await params
         const product = await getProduct(id)
-      
+
         const jsonLd = {
           '@context': 'https://schema.org',
           '@type': 'Product',
@@ -920,7 +920,7 @@ server.tool("runNextJSAudit", {}, async () => ({
           image: product.image,
           description: product.description,
         }
-      
+
         return (
           <section>
             {/* Add JSON-LD to your page */}
@@ -932,12 +932,12 @@ server.tool("runNextJSAudit", {}, async () => ({
           </section>
         )
       }
-      
+
       You can type your JSON-LD with TypeScript using community packages like schema-dts:
 
 
       import { Product, WithContext } from 'schema-dts'
-      
+
       const jsonLd: WithContext<Product> = {
         '@context': 'https://schema.org',
         '@type': 'Product',
@@ -981,7 +981,7 @@ server.tool("runNextJSAudit", {}, async () => ({
           getAllPostSlugsWithModifyTime
         } from "@/utils/getData";
         import { MetadataRoute } from "next";
-        
+
         export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           const defaultPages = [
             {
@@ -1004,10 +1004,10 @@ server.tool("runNextJSAudit", {}, async () => ({
             }
             // other pages
           ];
-        
+
           const postSlugs = await getAllPostSlugsWithModifyTime();
           const categorySlugs = await getAllCategories();
-        
+
           const sitemap = [
             ...defaultPages,
             ...postSlugs.map((e: any) => ({
@@ -1023,7 +1023,7 @@ server.tool("runNextJSAudit", {}, async () => ({
               priority: 0.7
             }))
           ];
-        
+
           return sitemap;
         }
         With this sitemap.ts file created, you can access the sitemap at https://dminhvu.com/sitemap.xml.
@@ -1062,7 +1062,7 @@ server.tool("runNextJSAudit", {}, async () => ({
         app/robots.ts
 
         import { MetadataRoute } from "next";
-        
+
         export default function robots(): MetadataRoute.Robots {
           return {
             rules: {
@@ -1080,7 +1080,7 @@ server.tool("runNextJSAudit", {}, async () => ({
         Allow: /
         Disallow: /search?q=
         Disallow: /admin
-        
+
         Sitemap: https://dminhvu.com/sitemap.xml
       5. Link tags
       Link Tags for Next.js Pages Router
@@ -1089,7 +1089,7 @@ server.tool("runNextJSAudit", {}, async () => ({
       pages/_app.tsx
 
       import Head from "next/head";
-      
+
       export default function Page() {
         return (
           <Head>
@@ -1116,7 +1116,7 @@ server.tool("runNextJSAudit", {}, async () => ({
       pages/[slug].tsx
 
       import Head from "next/head";
-      
+
       export default function Page() {
         return (
           <Head>
@@ -1191,7 +1191,7 @@ server.tool("runNextJSAudit", {}, async () => ({
 
       import Head from "next/head";
       import Script from "next/script";
-      
+
       export default function Page() {
         return (
           <Head>
@@ -1229,7 +1229,7 @@ server.tool("runNextJSAudit", {}, async () => ({
       import { GoogleTagManager } from "@next/third-parties/google";
       import { GoogleAnalytics } from "@next/third-parties/google";
       import Head from "next/head";
-      
+
       export default function Page() {
         return (
           <html lang="en" className="scroll-smooth" suppressHydrationWarning>
@@ -1258,7 +1258,7 @@ server.tool("runNextJSAudit", {}, async () => ({
 
 
       import Image from "next/image";
-      
+
       export default function Page() {
         return (
           <Image
@@ -1293,7 +1293,7 @@ server.tool(
         type: "text",
         text: `
       Please follow this exact sequence to debug an issue in our application:
-  
+
   1. Reflect on 5-7 different possible sources of the problem
   2. Distill those down to 1-2 most likely sources
   3. Add additional logs to validate your assumptions and track the transformation of data structures throughout the application control flow before we move onto implementing the actual code fix
@@ -1319,7 +1319,7 @@ server.tool(
         type: "text",
         text: `
       I want you to enter "Audit Mode". Use the following MCP tools one after the other in this exact sequence:
-      
+
       1. runAccessibilityAudit
       2. runPerformanceAudit
       3. runBestPracticesAudit
@@ -1333,7 +1333,7 @@ server.tool(
       DO NOT use the takeScreenshot tool EVER during audit mode. ONLY use it if I specifically ask you to take a screenshot of something.
 
       DO NOT check console or network logs to get started - your main priority is to run the audits in the sequence defined above.
-      
+
       After returning an in-depth analysis, scan through my code and identify various files/parts of my codebase that we want to modify/improve based on the results of our audits.
 
       After identifying what changes may be needed, do NOT make the actual changes. Instead, return back a comprehensive, step-by-step plan to address all of these changes and ask for approval to execute this plan. If feedback is received, make a new plan and ask for approval again. If approved, execute the ENTIRE plan and after all phases/steps are complete, re-run the auditing tools in the same 4 step sequence again before returning back another analysis for additional changes potentially needed.
@@ -1423,6 +1423,186 @@ server.tool(
     });
   }
 );
+
+// Add new tool for getting cookies
+server.tool("getCookies", "Get all cookies from the browser", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/cookies`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting cookies: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting cookies: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting cookies: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
+
+// Add new tool for getting localStorage
+server.tool("getLocalStorage", "Get all localStorage items", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/local-storage`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting localStorage: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting localStorage: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting localStorage: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
+
+// Add new tool for getting sessionStorage
+server.tool("getSessionStorage", "Get all sessionStorage items", async () => {
+  return await withServerConnection(async () => {
+    try {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/session-storage`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting sessionStorage: ${
+                errorData.error || response.statusText
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const json = await response.json();
+
+      if (json.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting sessionStorage: ${json.error}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting sessionStorage: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+});
 
 // Start receiving messages on stdio
 (async () => {
