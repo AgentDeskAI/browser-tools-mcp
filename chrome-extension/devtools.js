@@ -710,7 +710,7 @@ function captureAndSendElement() {
           top: rect.top,
           left: rect.left
         },
-        innerHTML: el.innerHTML.substring(0, 500)
+        innerHTML: el.innerHTML.substring(0, ${settings.stringSizeLimit})
       };
     })()`,
     (result, isException) => {
