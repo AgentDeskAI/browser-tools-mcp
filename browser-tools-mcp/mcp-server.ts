@@ -175,26 +175,40 @@ async function withServerConnection<T>(
 }
 
 // We'll define our tools that retrieve data from the browser connector
-server.tool("getConsoleLogs", "Check our browser logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/console-logs`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-    };
-  });
-});
+server.tool(
+  "getConsoleLogs",
+  "Check our browser logs",
+  {},
+  {
+    title: "Get Console Logs",
+    readOnlyHint: true,
+  },
+  async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/console-logs`
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    });
+  }
+);
 
 server.tool(
   "getConsoleErrors",
   "Check our browsers console errors",
+  {},
+  {
+    title: "Get Console Errors",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       const response = await fetch(
@@ -213,44 +227,67 @@ server.tool(
   }
 );
 
-server.tool("getNetworkErrors", "Check our network ERROR logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/network-errors`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-      isError: true,
-    };
-  });
-});
+server.tool(
+  "getNetworkErrors",
+  "Check our network ERROR logs",
+  {},
+  {
+    title: "Get Network Errors",
+    readOnlyHint: true,
+  },
+  async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/network-errors`
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+        isError: true,
+      };
+    });
+  }
+);
 
-server.tool("getNetworkLogs", "Check ALL our network logs", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/network-success`
-    );
-    const json = await response.json();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(json, null, 2),
-        },
-      ],
-    };
-  });
-});
+server.tool(
+  "getNetworkLogs",
+  "Check ALL our network logs",
+  {},
+  {
+    title: "Get Network Logs",
+    readOnlyHint: true,
+  },
+  async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/network-success`
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(json, null, 2),
+          },
+        ],
+      };
+    });
+  }
+);
 
 server.tool(
   "takeScreenshot",
   "Take a screenshot of the current browser tab",
+  {},
+  {
+    title: "Take Screenshot",
+    destructiveHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       try {
@@ -301,6 +338,11 @@ server.tool(
 server.tool(
   "getSelectedElement",
   "Get the selected element from the browser",
+  {},
+  {
+    title: "Get Selected Element",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       const response = await fetch(
@@ -319,25 +361,34 @@ server.tool(
   }
 );
 
-server.tool("wipeLogs", "Wipe all browser logs from memory", async () => {
-  return await withServerConnection(async () => {
-    const response = await fetch(
-      `http://${discoveredHost}:${discoveredPort}/wipelogs`,
-      {
-        method: "POST",
-      }
-    );
-    const json = await response.json();
-    return {
-      content: [
+server.tool(
+  "wipeLogs",
+  "Wipe all browser logs from memory",
+  {},
+  {
+    title: "Wipe Logs",
+    destructiveHint: true,
+  },
+  async () => {
+    return await withServerConnection(async () => {
+      const response = await fetch(
+        `http://${discoveredHost}:${discoveredPort}/wipelogs`,
         {
-          type: "text",
-          text: json.message,
-        },
-      ],
-    };
-  });
-});
+          method: "POST",
+        }
+      );
+      const json = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: json.message,
+          },
+        ],
+      };
+    });
+  }
+);
 
 // Define audit categories as enum to match the server's AuditCategory enum
 enum AuditCategory {
@@ -353,6 +404,10 @@ server.tool(
   "runAccessibilityAudit",
   "Run an accessibility audit on the current page",
   {},
+  {
+    title: "Run Accessibility Audit",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       try {
@@ -436,6 +491,10 @@ server.tool(
   "runPerformanceAudit",
   "Run a performance audit on the current page",
   {},
+  {
+    title: "Run Performance Audit",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       try {
@@ -519,6 +578,10 @@ server.tool(
   "runSEOAudit",
   "Run an SEO audit on the current page",
   {},
+  {
+    title: "Run SEO Audit",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       try {
@@ -577,7 +640,15 @@ server.tool(
   }
 );
 
-server.tool("runNextJSAudit", {}, async () => ({
+server.tool(
+  "runNextJSAudit",
+  "Run a Next.js-specific SEO audit on the application",
+  {},
+  {
+    title: "Run Next.js Audit",
+    readOnlyHint: true,
+  },
+  async () => ({
   content: [
     {
       type: "text",
@@ -1282,18 +1353,24 @@ server.tool("runNextJSAudit", {}, async () => ({
     `,
     },
   ],
-}));
+  })
+);
 
 server.tool(
   "runDebuggerMode",
   "Run debugger mode to debug an issue in our application",
+  {},
+  {
+    title: "Run Debugger Mode",
+    readOnlyHint: true,
+  },
   async () => ({
     content: [
       {
         type: "text",
         text: `
       Please follow this exact sequence to debug an issue in our application:
-  
+
   1. Reflect on 5-7 different possible sources of the problem
   2. Distill those down to 1-2 most likely sources
   3. Add additional logs to validate your assumptions and track the transformation of data structures throughout the application control flow before we move onto implementing the actual code fix
@@ -1313,6 +1390,11 @@ server.tool(
 server.tool(
   "runAuditMode",
   "Run audit mode to optimize our application for SEO, accessibility and performance",
+  {},
+  {
+    title: "Run Audit Mode",
+    readOnlyHint: true,
+  },
   async () => ({
     content: [
       {
@@ -1351,6 +1433,10 @@ server.tool(
   "runBestPracticesAudit",
   "Run a best practices audit on the current page",
   {},
+  {
+    title: "Run Best Practices Audit",
+    readOnlyHint: true,
+  },
   async () => {
     return await withServerConnection(async () => {
       try {
