@@ -56,7 +56,7 @@ function getDefaultServerHost(): string {
 
 // Server discovery function - similar to what you have in the Chrome extension
 async function discoverServer(): Promise<boolean> {
-  console.log("Starting server discovery process");
+  console.error("Starting server discovery process");
 
   // Common hosts to try
   const hosts = [getDefaultServerHost(), "127.0.0.1", "localhost"];
@@ -72,14 +72,14 @@ async function discoverServer(): Promise<boolean> {
     }
   }
 
-  console.log(`Will try hosts: ${hosts.join(", ")}`);
-  console.log(`Will try ports: ${ports.join(", ")}`);
+  console.error(`Will try hosts: ${hosts.join(", ")}`);
+  console.error(`Will try ports: ${ports.join(", ")}`);
 
   // Try to find the server
   for (const host of hosts) {
     for (const port of ports) {
       try {
-        console.log(`Checking ${host}:${port}...`);
+        console.error(`Checking ${host}:${port}...`);
 
         // Use the identity endpoint for validation
         const response = await fetch(`http://${host}:${port}/.identity`, {
@@ -91,7 +91,7 @@ async function discoverServer(): Promise<boolean> {
 
           // Verify this is actually our server by checking the signature
           if (identity.signature === "mcp-browser-connector-24x7") {
-            console.log(`Successfully found server at ${host}:${port}`);
+            console.error(`Successfully found server at ${host}:${port}`);
 
             // Save the discovered connection
             discoveredHost = host;
@@ -357,7 +357,7 @@ server.tool(
     return await withServerConnection(async () => {
       try {
         // Simplified approach - let the browser connector handle the current tab and URL
-        console.log(
+        console.error(
           `Sending POST request to http://${discoveredHost}:${discoveredPort}/accessibility-audit`
         );
         const response = await fetch(
@@ -377,7 +377,7 @@ server.tool(
         );
 
         // Log the response status
-        console.log(`Accessibility audit response status: ${response.status}`);
+        console.error(`Accessibility audit response status: ${response.status}`);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -440,7 +440,7 @@ server.tool(
     return await withServerConnection(async () => {
       try {
         // Simplified approach - let the browser connector handle the current tab and URL
-        console.log(
+        console.error(
           `Sending POST request to http://${discoveredHost}:${discoveredPort}/performance-audit`
         );
         const response = await fetch(
@@ -460,7 +460,7 @@ server.tool(
         );
 
         // Log the response status
-        console.log(`Performance audit response status: ${response.status}`);
+        console.error(`Performance audit response status: ${response.status}`);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -522,7 +522,7 @@ server.tool(
   async () => {
     return await withServerConnection(async () => {
       try {
-        console.log(
+        console.error(
           `Sending POST request to http://${discoveredHost}:${discoveredPort}/seo-audit`
         );
         const response = await fetch(
@@ -542,7 +542,7 @@ server.tool(
         );
 
         // Log the response status
-        console.log(`SEO audit response status: ${response.status}`);
+        console.error(`SEO audit response status: ${response.status}`);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -1354,7 +1354,7 @@ server.tool(
   async () => {
     return await withServerConnection(async () => {
       try {
-        console.log(
+        console.error(
           `Sending POST request to http://${discoveredHost}:${discoveredPort}/best-practices-audit`
         );
         const response = await fetch(
