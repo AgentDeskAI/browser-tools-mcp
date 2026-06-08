@@ -5,10 +5,42 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import path from "path";
 import fs from "fs";
 
+const SERVER_VERSION = "1.2.0";
+
+function hasFlag(flags: string[]): boolean {
+  return process.argv.slice(2).some((arg) => flags.includes(arg));
+}
+
+function printHelp(): void {
+  console.log(`Browser Tools MCP ${SERVER_VERSION}
+
+Usage:
+  browser-tools-mcp [options]
+
+Options:
+  -v, --version  Print the package version and exit.
+  -h, --help     Print this help text and exit.
+
+Environment:
+  BROWSER_TOOLS_HOST  Browser tools server host. Default: 127.0.0.1.
+  BROWSER_TOOLS_PORT  Browser tools server port. Default: 3025.
+`);
+}
+
+if (hasFlag(["--version", "-v"])) {
+  console.log(SERVER_VERSION);
+  process.exit(0);
+}
+
+if (hasFlag(["--help", "-h"])) {
+  printHelp();
+  process.exit(0);
+}
+
 // Create the MCP server
 const server = new McpServer({
   name: "Browser Tools MCP",
-  version: "1.2.0",
+  version: SERVER_VERSION,
 });
 
 // Track the discovered server connection
