@@ -1,0 +1,15 @@
+services:
+  browser-tools-server:
+    container_name: browser-tools-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Maps the container's internal port 3025 to the host's port 3025
+      - "3025:3025"
+    environment:
+      # Exporting the necessary environment variables
+      - PORT=3025
+      # Set the SERVER_HOST to 0.0.0.0 to listen on all interfaces inside the container
+      - SERVER_HOST=0.0.0.0
+    restart: unless-stopped
