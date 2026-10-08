@@ -56,7 +56,7 @@ starts as soon as DevTools is open. The panel is for settings and status.
 | `getNetworkLogs`, `getNetworkErrors` | Same names, now take `urlKeywords`, `bodyKeywords`, `limit`, `offset` |
 | `takeScreenshot` | Now returns the **image itself** plus the saved path, instead of the string "Successfully saved screenshot" |
 | `getSelectedElement`, `wipeLogs` | Unchanged |
-| `runAccessibilityAudit`, `runPerformanceAudit`, `runSEOAudit`, `runBestPracticesAudit` | Same names; reports are restructured (see below) and accept an optional `url` |
+| `runAccessibilityAudit`, `runPerformanceAudit`, `runSEOAudit`, `runBestPracticesAudit` | Same names; reports are restructured (see below) and accept an optional `url`. A `url` on localhost or a private network is audited only while that origin is open in a connected tab, or is allowlisted with `--audit-allow-origin`; link-local and cloud metadata addresses are never audited |
 | `runDebuggerMode`, `runAuditMode`, `runNextJSAudit` | **Removed as tools.** They returned static text and cost context on every request. They are now MCP *prompts*: `debuggerMode`, `auditMode`, `nextjsSeoAudit` |
 | — | New: `getPageInfo`, `getConnectionStatus`, `refreshBrowser`, `getBrowserStorage`, `listBrowserTabs` |
 
