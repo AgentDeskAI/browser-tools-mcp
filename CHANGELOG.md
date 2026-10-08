@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.0.3 — Security
+
+Fixes a server-side request forgery in the four Lighthouse audit tools
+(`runAccessibilityAudit`, `runPerformanceAudit`, `runSEOAudit`,
+`runBestPracticesAudit`), CWE-918, present in 2.0.0 through 2.0.2.
+Advisory: GHSA-fm7v-38h4-4q7w.
+
+The tools accept a `url` and audited it in a headless Chrome on the user's
+machine after checking only that the scheme was http or https. A caller — in
+practice a model acting on prompt-injected page content — could point that
+browser at loopback services, the LAN or a cloud metadata endpoint, and the
+stored report (`browser-tools://audit/{reportId}`) handed the rendered page
+back as its `final-screenshot`.
+
+- **Audits no longer reach link-local, cloud metadata, or unvouched loopback
+  and private addresses.** Link-local and metadata addresses (169.254.0.0/16,
+  `metadata.google.internal`, AWS IMDS over IPv6, Alibaba, and the rest) are
+  never audited, in any spelling: IPv4-mapped IPv6, NAT64, 6to4, decimal, hex
+  and octal forms are all classified the same way. Pages on localhost or a
+  private network are audited only while that origin is open in a connected
+  tab (the normal dev-server flow keeps working), or when allowlisted.
+- **Every request the audit browser makes is checked as it happens.** The
+  browser runs behind an in-process proxy that resolves and classifies each
+  request — redirects, iframes, fetches and websockets included — and
+  connects to the address it vetted, so a public page cannot redirect or frame
+  its way inside, and a rebinding name cannot change address after the check.
+  Lookups fail closed.
+- New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
+  (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
+  `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
+  are not open in a tab. Even with private access allowed, link-local and
+  metadata addresses stay blocked.
+- URLs with embedded credentials are rejected.
+- `@agentdeskai/browser-tools-server` is affected through its dependency and
+  now requires `@agentdeskai/browser-tools-mcp` `^2.0.3`.
+
+If you cannot upgrade: exclude the audit tools with
+`--exclude runAccessibilityAudit,runPerformanceAudit,runSEOAudit,runBestPracticesAudit`,
+and do not run the server on a host with an IMDSv1 metadata service.
+
+The session file written by the embedded connector reported version 2.0.0
+regardless of the installed version; it now reports the real one.
+
+<!-- TODO before publishing: add reporter credit and the CVE id once assigned. -->
+
 ## 2.0.2
 
 Five defects, all found by writing the 2.1 capability specifications rather

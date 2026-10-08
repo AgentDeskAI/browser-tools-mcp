@@ -6,7 +6,7 @@ import {
 } from "./mcp/client.js";
 import { readSessionFile, writeSessionFile, clearSessionFile } from "./util/session.js";
 import { createLogger } from "./util/logger.js";
-import type { CliOptions } from "./cli.js";
+import { readPackageVersion, type CliOptions } from "./cli.js";
 
 const log = createLogger("runtime");
 
@@ -161,7 +161,8 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       token: connector.token,
       pid: process.pid,
       startedAt: new Date().toISOString(),
-      version: "2.0.0",
+      // Was a literal that 2.0.1 and 2.0.2 never updated; connector-bin already reads the real one.
+      version: readPackageVersion(),
     });
 
     return {
