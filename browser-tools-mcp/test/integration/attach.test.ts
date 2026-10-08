@@ -37,6 +37,8 @@ beforeEach(async () => {
     port: 0,
     screenshotDir,
     requestTimeoutMs: 3_000,
+    // Hermetic: audit targets are resolved before the runner is called.
+    auditLookup: async () => ["93.184.215.14"],
     auditRunner: async ({ url, category }) => ({
       category,
       metadata: { url, timestamp: "2026-07-30T00:00:00.000Z", device: "desktop", lighthouseVersion: "13.4.1" },

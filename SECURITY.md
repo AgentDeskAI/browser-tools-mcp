@@ -111,6 +111,10 @@ be, both are worth reporting.
   storage, not before display.
 - Request bodies are size-limited; log retention is bounded and client-supplied
   limits are clamped.
+- The audit browser never reaches link-local or cloud metadata addresses, and
+  reaches loopback or private addresses only for a page the user has open in a
+  connected tab or has allowlisted. Every request it makes goes through a
+  checking proxy that connects to the address it vetted.
 
 These are covered by regression tests in
 `browser-tools-mcp/test/integration/connector-security.test.ts`, which assert

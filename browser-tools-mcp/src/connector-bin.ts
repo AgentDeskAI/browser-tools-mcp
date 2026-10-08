@@ -46,6 +46,8 @@ async function main(): Promise<void> {
     ...(options.token ? { token: options.token } : {}),
     redact: options.redact,
     verbose: options.verbose,
+    ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
+    auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
   });
 
   writeSessionFile({

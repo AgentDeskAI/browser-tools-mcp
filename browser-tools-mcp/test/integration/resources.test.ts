@@ -31,6 +31,8 @@ beforeEach(async () => {
     port: 0,
     screenshotDir,
     requestTimeoutMs: 3_000,
+    // Hermetic: audit targets are resolved before the runner is called.
+    auditLookup: async () => ["93.184.215.14"],
     auditRunner: async ({ url, category }, hooks) => {
       // Hand back a raw result so the connector has a full report to persist.
       hooks?.onRawResult?.({ lighthouseVersion: "13.4.1", requestedUrl: url, huge: "x".repeat(5000) });

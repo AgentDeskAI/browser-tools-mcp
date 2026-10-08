@@ -30,7 +30,8 @@ import {
   parseImageDataUrl,
   withExtension,
 } from "../util/image.js";
-import { AuditError, runLighthouseAudit, type AuditHooks } from "../lighthouse/runner.js";
+import { AuditError, runLighthouseAudit, type AuditHooks, type AuditOptions } from "../lighthouse/runner.js";
+import { originOf, resolveDestination } from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -89,11 +90,24 @@ export interface ConnectorConfig {
    * on a busy page it is a lot of output.
    */
   verbose?: boolean;
+  /**
+   * Extra origins (scheme://host:port) on loopback or a private network that
+   * audits may target even when no connected tab is on them.
+   */
+  auditAllowedOrigins?: string[];
+  /**
+   * Let audits reach any loopback or private address. Off by default: with it
+   * on, anything that can call an audit tool can make the audit browser read
+   * internal services. Link-local and metadata addresses stay blocked.
+   */
+  auditAllowPrivateNetwork?: boolean;
   /** Injectable so audits can be exercised without launching a browser. */
   auditRunner?: (
-    options: { url: string; category: AuditCategory },
+    options: { url: string; category: AuditCategory; egress?: AuditOptions["egress"] },
     hooks?: AuditHooks
   ) => Promise<AuditReport>;
+  /** Injectable DNS for tests of the audit destination policy. */
+  auditLookup?: (host: string) => Promise<string[]>;
 }
 
 export interface TabView {
@@ -990,6 +1004,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         "No page URL is known yet. Open the page in Chrome with DevTools open, or pass a url explicitly."
       );
     }
+    const egress = await checkAuditTarget(url);
     const runner = config.auditRunner ?? runLighthouseAudit;
 
     // The condensed report is what an agent reads; the unabridged Lighthouse
@@ -1009,8 +1024,79 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       },
     };
 
-    const report = await runner({ url, category }, hooks);
+    const report = await runner(
+      { url, category, egress: { ...egress, ...(config.auditLookup ? { lookup: config.auditLookup } : {}) } },
+      hooks
+    );
     return reportId ? { ...report, reportId } : report;
+  }
+
+  /**
+   * Origins from --audit-allow-origin, normalised once. "localhost:3000" is
+   * accepted as http://localhost:3000 — written as a URL it would parse as a
+   * "localhost:" scheme and be ignored without a word, which would read as the
+   * flag not working. Anything else unparseable is reported, not dropped.
+   */
+  const configuredAuditOrigins = new Set<string>();
+  for (const raw of config.auditAllowedOrigins ?? []) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    const origin = originOf(/^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `http://${entry}`);
+    if (origin) configuredAuditOrigins.add(origin);
+    else log.warn(`Ignoring audit-allow-origin ${JSON.stringify(raw)}: not an http(s) origin`);
+  }
+
+  /** Origins the user has open in a connected tab, plus any configured ones. */
+  function vouchedOrigins(): Set<string> {
+    const origins = new Set<string>(configuredAuditOrigins);
+    for (const record of tabs.values()) {
+      const origin = record.url ? originOf(record.url) : null;
+      if (origin) origins.add(origin);
+    }
+    const current = store.getCurrentPage().url;
+    const currentOrigin = current ? originOf(current) : null;
+    if (currentOrigin) origins.add(currentOrigin);
+    return origins;
+  }
+
+  /**
+   * Decides whether an audit may target this url, before any browser starts.
+   *
+   * Audits accept a url from the MCP client, and the client may be a model
+   * acting on prompt-injected page content. Public sites are fine to audit.
+   * Loopback and private-network pages are allowed only when they are already
+   * open in a connected tab — the user went there, and the extension already
+   * captures that page — or are explicitly allowlisted. Link-local and cloud
+   * metadata addresses are never allowed.
+   */
+  async function checkAuditTarget(url: string): Promise<{ allowPrivate: boolean }> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new AuditError(`Not a valid URL: ${JSON.stringify(url)}`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new AuditError(`Cannot audit ${parsed.protocol} URLs — navigate to an http(s) page first.`);
+    }
+    const dest = await resolveDestination(parsed.hostname, config.auditLookup);
+    if (dest.class === "blocked") {
+      throw new AuditError(
+        `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata, reserved ` +
+          `or unresolvable address.`
+      );
+    }
+    if (dest.class === "public") return { allowPrivate: config.auditAllowPrivateNetwork === true };
+    if (config.auditAllowPrivateNetwork) return { allowPrivate: true };
+
+    const origin = originOf(parsed);
+    if (origin && vouchedOrigins().has(origin)) return { allowPrivate: true };
+    throw new AuditError(
+      `Refusing to audit ${origin ?? parsed.hostname}: it is on ${
+        dest.class === "loopback" ? "this machine" : "a private network"
+      } and is not open in a connected browser tab. Open it in Chrome with DevTools open and ` +
+        `audit it from there, or allow it with --audit-allow-origin.`
+    );
   }
 
   function broadcast(message: unknown): void {

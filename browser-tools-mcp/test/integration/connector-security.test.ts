@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { createConnector, type Connector } from "../../src/connector/connector";
-import { tryWebSocket, TINY_PNG_BASE64 } from "../helpers/fake-extension";
+import { tryWebSocket, TINY_PNG_BASE64, FakeExtension } from "../helpers/fake-extension";
 
 /**
  * These are the regression tests for the vulnerabilities that were live in
@@ -240,5 +240,134 @@ describe("request body limits", () => {
       .send({ blob: huge });
 
     expect(res.status).toBe(413);
+  });
+});
+
+/**
+ * SSRF through the audit tools (CWE-918). Through 2.0.2 an audit accepted any
+ * http(s) url, so a caller could make the audit browser load loopback, LAN or
+ * cloud metadata addresses and read the page back from the stored report's
+ * screenshot.
+ */
+describe("audit destination policy", () => {
+  let guarded: Connector;
+  let guardedDir: string;
+  const audited: Array<{ url: string; allowPrivate: boolean | undefined }> = [];
+
+  beforeAll(async () => {
+    guardedDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-"));
+    guarded = await createConnector({
+      port: 0,
+      screenshotDir: guardedDir,
+      auditLookup: async (host) => (host === "intranet.test" ? ["10.0.0.7"] : ["93.184.215.14"]),
+      auditRunner: async ({ url, category, egress }) => {
+        audited.push({ url, allowPrivate: egress?.allowPrivate });
+        return { category, score: 100, metadata: { url }, summary: {}, issues: [] } as any;
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await guarded?.close();
+    fs.rmSync(guardedDir, { recursive: true, force: true });
+  });
+
+  async function audit(url: string) {
+    return request(guarded.app)
+      .post("/api/audit/performance")
+      .set("Authorization", `Bearer ${guarded.token}`)
+      .send({ url });
+  }
+
+  it.each([
+    "http://127.0.0.1:18742/",
+    "http://localhost:6379/",
+    "http://app.localhost/",
+    "http://[::1]/",
+    "http://2130706433/",
+    "http://192.168.1.1/",
+    "http://10.0.0.1/",
+    "http://intranet.test/",
+  ])("refuses an internal url that no open tab vouches for: %s", async (url) => {
+    const before = audited.length;
+    const res = await audit(url);
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/not open in a connected browser tab/);
+    expect(audited.length).toBe(before);
+  });
+
+  it.each([
+    "http://169.254.169.254/latest/meta-data/",
+    "http://[::ffff:169.254.169.254]/",
+    "http://metadata.google.internal/",
+    "http://0.0.0.0:8080/",
+  ])("always refuses metadata and reserved addresses: %s", async (url) => {
+    const before = audited.length;
+    const res = await audit(url);
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/link-local|metadata|reserved/);
+    expect(audited.length).toBe(before);
+  });
+
+  it("audits public sites, without letting them reach private addresses", async () => {
+    const res = await audit("https://example.com/");
+    expect(res.status).toBe(200);
+    expect(audited.at(-1)).toEqual({ url: "https://example.com/", allowPrivate: false });
+  });
+
+  it("audits a localhost page the user has open in a connected tab", async () => {
+    const ext = new FakeExtension({ port: guarded.port, tabId: 1 });
+    await ext.connect();
+    await ext.waitForWelcome();
+    ext.send({ type: "page", url: "http://localhost:3000/dashboard", tabId: 1 });
+    await vi.waitFor(() => {
+      expect(guarded.listTabs().find((t) => t.tabId === 1)?.url).toBe("http://localhost:3000/dashboard");
+    });
+    try {
+      const res = await audit("http://localhost:3000/other-route");
+      expect(res.status).toBe(200);
+      expect(audited.at(-1)).toEqual({ url: "http://localhost:3000/other-route", allowPrivate: true });
+
+      // Same host, different port: a different service, not vouched for.
+      expect((await audit("http://localhost:3001/")).status).toBe(422);
+    } finally {
+      await ext.close();
+    }
+  });
+
+  it("honours --audit-allow-origin, with or without a scheme, as an exact origin", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-allow-"));
+    const ran: string[] = [];
+    const allowed = await createConnector({
+      port: 0,
+      screenshotDir: dir,
+      auditAllowedOrigins: ["http://localhost:4000", "127.0.0.1:5000", "http://192.168.1.50/", "chrome://x"],
+      auditLookup: async () => ["93.184.215.14"],
+      auditRunner: async ({ url, category }) => {
+        ran.push(url);
+        return { category, score: 100, metadata: { url }, summary: {}, issues: [] } as any;
+      },
+    });
+    try {
+      const post = (url: string) =>
+        request(allowed.app)
+          .post("/api/audit/seo")
+          .set("Authorization", `Bearer ${allowed.token}`)
+          .send({ url });
+      expect((await post("http://localhost:4000/page")).status).toBe(200);
+      expect((await post("http://127.0.0.1:5000/")).status).toBe(200);
+      expect((await post("http://192.168.1.50/admin")).status).toBe(200);
+      // Different port, scheme or host: not the allowlisted origin.
+      expect((await post("http://localhost:4001/")).status).toBe(422);
+      expect((await post("https://localhost:4000/")).status).toBe(422);
+      expect((await post("http://127.0.0.1:4000/")).status).toBe(422);
+      expect((await post("http://192.168.1.51/")).status).toBe(422);
+      // The allowlist never reaches metadata or link-local, even if named.
+      expect((await post("http://169.254.169.254/")).status).toBe(422);
+      expect(ran).toHaveLength(3);
+    } finally {
+      await allowed.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

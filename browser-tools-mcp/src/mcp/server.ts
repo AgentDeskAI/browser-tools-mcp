@@ -197,7 +197,10 @@ function auditTool(
             url: z
               .string()
               .optional()
-              .describe("Page to audit. Defaults to the page currently open in the browser."),
+              .describe(
+                "Page to audit. Defaults to the page currently open in the browser. Pages on " +
+                  "localhost or a private network can only be audited while open in a connected tab."
+              ),
             tabId: tabIdInput,
           },
           outputSchema: auditOutputShape,

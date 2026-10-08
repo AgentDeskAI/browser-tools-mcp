@@ -1,6 +1,8 @@
 import { createLogger } from "../util/logger.js";
 import { extractAuditReport } from "./extract.js";
 import { describeLaunchFailure, findAuditBrowser, NoBrowserError, type FoundBrowser } from "./find-browser.js";
+import { resolveDestination, type Lookup } from "./destination.js";
+import { proxyChromeFlags, startEgressProxy, type EgressProxy } from "./egress-proxy.js";
 import type { AuditCategory, AuditReport, LighthouseResultLike } from "./types.js";
 
 const log = createLogger("lighthouse");
@@ -16,6 +18,14 @@ export interface AuditOptions {
   /** "desktop" (default) or "mobile". */
   device?: "desktop" | "mobile";
   timeoutMs?: number;
+  /**
+   * Where the audit browser may go. Blocked addresses (link-local, metadata,
+   * multicast, reserved) are always refused. Loopback and private addresses
+   * are allowed when `allowPrivate` is true; by default that is the case only
+   * when the audited page is itself local, because the caller (the connector)
+   * has already decided that page may be audited.
+   */
+  egress?: { allowPrivate?: boolean; lookup?: Lookup };
 }
 
 export class AuditError extends Error {
@@ -101,6 +111,9 @@ export function assertAuditableUrl(url: string): URL {
       `Cannot audit ${parsed.protocol} URLs — navigate to an http(s) page first.`
     );
   }
+  if (parsed.username || parsed.password) {
+    throw new AuditError("Cannot audit a URL that embeds credentials.");
+  }
   return parsed;
 }
 
@@ -124,12 +137,29 @@ export async function runLighthouseAudit(
   hooks: AuditHooks = {}
 ): Promise<AuditReport> {
   const { category, device = "desktop", timeoutMs = 60_000 } = options;
-  const url = assertAuditableUrl(options.url).toString();
+  const parsed = assertAuditableUrl(options.url);
+  const url = parsed.toString();
+
+  const top = await resolveDestination(parsed.hostname, options.egress?.lookup);
+  if (top.class === "blocked") {
+    throw new AuditError(
+      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, metadata, reserved or ` +
+        `unresolvable address.`
+    );
+  }
+  const allowPrivate =
+    options.egress?.allowPrivate ?? (top.class === "loopback" || top.class === "private");
 
   let chrome: { port: number; kill: () => Promise<void> } | undefined;
   let chosen: FoundBrowser | undefined;
+  let proxy: EgressProxy | undefined;
 
   try {
+    proxy = await startEgressProxy({
+      allowPrivate,
+      ...(options.egress?.lookup ? { lookup: options.egress.lookup } : {}),
+    });
+
     const [chromeLauncher, lighthouseModule] = await Promise.all([
       import("chrome-launcher"),
       import("lighthouse"),
@@ -145,7 +175,7 @@ export async function runLighthouseAudit(
     log.debug(`Running the audit in ${browser.name} (${browser.source})`);
 
     chrome = (await chromeLauncher.launch({
-      chromeFlags: CHROME_FLAGS,
+      chromeFlags: [...CHROME_FLAGS, ...proxyChromeFlags(proxy.port)],
       chromePath: browser.path,
     })) as unknown as { port: number; kill: () => Promise<void> };
 
@@ -159,6 +189,11 @@ export async function runLighthouseAudit(
 
     const lhr = result?.lhr;
     if (!lhr) throw new AuditError("Lighthouse returned no result");
+    if ((lhr as { runtimeError?: { code?: string } }).runtimeError && proxy.refused.length > 0) {
+      throw new AuditError(
+        `The audited page tried to reach ${proxy.refused[0]!.host}, which audits are not allowed to load.`
+      );
+    }
 
     hooks.onRawResult?.(lhr);
     return extractAuditReport(lhr, url, category, device);
@@ -191,6 +226,7 @@ export async function runLighthouseAudit(
         log.warn("Could not shut down the audit Chrome instance:", error);
       }
     }
+    await proxy?.close();
   }
 }
 
