@@ -61,7 +61,9 @@ If you cannot upgrade: exclude the audit tools with
 and do not run the server on a host with an IMDSv1 metadata service.
 
 The session file written by the embedded connector reported version 2.0.0
-regardless of the installed version; it now reports the real one.
+regardless of the installed version; it now reports the real one. An audit
+requested through a shared connector with a `tabId` audited the current tab
+instead of the named one; it now audits the named tab.
 
 Thanks to @beardthelion for reporting.
 

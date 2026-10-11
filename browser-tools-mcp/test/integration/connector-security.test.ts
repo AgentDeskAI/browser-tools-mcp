@@ -3,6 +3,7 @@ import request from "supertest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import WebSocket from "ws";
 import { createConnector, type Connector } from "../../src/connector/connector";
 import { tryWebSocket, TINY_PNG_BASE64, FakeExtension } from "../helpers/fake-extension";
 
@@ -348,6 +349,10 @@ describe("audit destination policy", () => {
 
       // Same host, different port: a different service, not vouched for.
       expect((await audit("http://localhost:3001/")).status).toBe(422);
+
+      // The same port under another loopback spelling is the same server.
+      expect((await audit("http://127.0.0.1:3000/")).status).toBe(200);
+      expect(audited.at(-1)!.allowedOrigins).toEqual(["http://localhost:3000", "http://127.0.0.1:3000"]);
     } finally {
       await ext.close();
     }
@@ -405,6 +410,39 @@ describe("audit destination policy", () => {
     expect(res.body.error).toMatch(/not open in a connected browser tab/);
   });
 
+  /**
+   * An extension that never sends hello has no tab, so its page is vouched
+   * for through the socket that reported it, and only while it is open. Its
+   * mere presence must not bring back a page from a tab that has closed: the
+   * store's current page, which nothing clears, still names it.
+   */
+  it("vouches for an untabbed extension's own page only while its socket is open", async () => {
+    const closed = await openTab(7, "http://localhost:7200/");
+    await closed.close();
+    await vi.waitFor(() => expect(guarded.listTabs()).toEqual([]));
+
+    const legacy = new WebSocket(`ws://127.0.0.1:${guarded.port}/extension-ws`, {
+      origin: "chrome-extension://legacyextension",
+    });
+    await new Promise<void>((resolve, reject) => {
+      legacy.once("open", () => resolve());
+      legacy.once("error", reject);
+    });
+    try {
+      expect((await audit("http://localhost:7200/")).status).toBe(422);
+
+      legacy.send(JSON.stringify({ type: "page", url: "http://localhost:7100/" }));
+      await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(200));
+      expect((await audit("http://localhost:7200/")).status).toBe(422);
+    } finally {
+      await new Promise<void>((resolve) => {
+        legacy.once("close", () => resolve());
+        legacy.close();
+      });
+    }
+    await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(422));
+  });
+
   it("refuses a url with embedded credentials before deciding anything else", async () => {
     const before = audited.length;
     const res = await audit("https://user:pass@example.com/");
@@ -413,7 +451,7 @@ describe("audit destination policy", () => {
     expect(audited.length).toBe(before);
   });
 
-  it("honours --audit-allow-origin, with or without a scheme, as an exact origin", async () => {
+  it("honours --audit-allow-origin, with or without a scheme, by scheme, host and port", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-allow-"));
     const ran: string[] = [];
     const allowed = await createConnector({
@@ -435,14 +473,17 @@ describe("audit destination policy", () => {
       expect((await post("http://localhost:4000/page")).status).toBe(200);
       expect((await post("http://127.0.0.1:5000/")).status).toBe(200);
       expect((await post("http://192.168.1.50/admin")).status).toBe(200);
+      // Another spelling of this machine is the same host, as the egress proxy
+      // already treats it: localhost:4000 and 127.0.0.1:4000 are one port.
+      expect((await post("http://127.0.0.1:4000/")).status).toBe(200);
+      expect((await post("http://[::1]:4000/")).status).toBe(200);
       // Different port, scheme or host: not the allowlisted origin.
       expect((await post("http://localhost:4001/")).status).toBe(422);
       expect((await post("https://localhost:4000/")).status).toBe(422);
-      expect((await post("http://127.0.0.1:4000/")).status).toBe(422);
       expect((await post("http://192.168.1.51/")).status).toBe(422);
       // The allowlist never reaches metadata or link-local, even if named.
       expect((await post("http://169.254.169.254/")).status).toBe(422);
-      expect(ran).toHaveLength(3);
+      expect(ran).toHaveLength(5);
     } finally {
       await allowed.close();
       fs.rmSync(dir, { recursive: true, force: true });

@@ -37,7 +37,7 @@ import {
   type AuditHooks,
   type AuditOptions,
 } from "../lighthouse/runner.js";
-import { isLocalName, originOf, resolveDestination } from "../lighthouse/destination.js";
+import { destinationKeyOf, isLocalName, originOf, resolveDestination } from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -198,6 +198,8 @@ interface ExtensionConnection {
   missedPings: number;
   lastSeen: number;
   tabId: number | string | null;
+  /** The page an extension that never named its tab last reported. */
+  pageUrl?: string;
 }
 
 interface PendingRequest {
@@ -461,7 +463,13 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
     try {
       const url = typeof req.body?.url === "string" ? req.body.url : undefined;
-      res.json(await runAudit(category, url ? { url } : {}));
+      const tabId = req.body?.tabId;
+      res.json(
+        await runAudit(category, {
+          ...(url ? { url } : {}),
+          ...(typeof tabId === "number" || typeof tabId === "string" ? { tabId } : {}),
+        })
+      );
     } catch (error) {
       respondWithError(res, error);
     }
@@ -864,6 +872,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           store.setCurrentPage({ url, tabId: connection.tabId });
         } else if (!record) {
           store.setCurrentPage({ url, tabId: message["tabId"] });
+          if (url && connection.tabId === null) connection.pageUrl = url;
         }
         break;
       }
@@ -1060,16 +1069,29 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       const origin = record.url ? originOf(record.url) : null;
       if (origin) origins.add(origin);
     }
-    // An extension that has connected without naming its tab reports its page
-    // with no tab to file it under. That page counts only while such a socket
-    // is open and no tab is known; otherwise the last reported url is a page
-    // the user has since left, and it must not keep vouching.
-    if (tabs.size === 0 && connections.size > 0) {
-      const current = store.getCurrentPage().url;
-      const origin = current ? originOf(current) : null;
+    // An extension that never names its tab reports its page with no tab to
+    // file it under, so that page is kept on the socket that reported it and
+    // counts while the socket is open. The store's current page is not used:
+    // nothing clears it, so it would keep vouching for a page long closed.
+    for (const connection of connections.values()) {
+      const origin = connection.tabId === null && connection.pageUrl ? originOf(connection.pageUrl) : null;
       if (origin) origins.add(origin);
     }
     return origins;
+  }
+
+  /**
+   * Whether one of these origins vouches for the url: the same scheme, and the
+   * same host and port as the egress proxy compares them, so every loopback
+   * spelling of this machine is one host. A tab on localhost:3000 vouches for
+   * an audit of 127.0.0.1:3000, as it already lets the page load it.
+   */
+  function vouchesFor(origins: Set<string>, url: URL): boolean {
+    const key = `${url.protocol}${destinationKeyOf(url)}`;
+    for (const origin of origins) {
+      if (`${new URL(origin).protocol}${destinationKeyOf(origin)}` === key) return true;
+    }
+    return false;
   }
 
   /**
@@ -1115,10 +1137,12 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
     const origin = originOf(parsed)!;
     const vouched = vouchedOrigins();
-    if (vouched.has(origin)) return { allowPrivate: false, allowedOrigins: [...vouched] };
+    if (vouchesFor(vouched, parsed)) {
+      return { allowPrivate: false, allowedOrigins: [...new Set([...vouched, origin])] };
+    }
 
     const where = dest.class === "loopback" ? "this machine" : "a private network";
-    if (openOrigins().has(origin)) {
+    if (vouchesFor(openOrigins(), parsed)) {
       throw new AuditError(
         `Refusing to audit ${origin}: ${parsed.hostname} is a public DNS name that points at ${where}. ` +
           `An open tab only vouches for local names (IP addresses, localhost, .test, .local and the ` +

@@ -183,6 +183,32 @@ describe("HttpConnectorClient against a live connector", () => {
     expect(report.issues[0]!.id).toBe("meta-description");
   });
 
+  it("audits the named tab over HTTP, not the current one", async () => {
+    // The route used to drop tabId, so an attached client asking for one tab
+    // got the current page audited instead.
+    const first = new FakeExtension({ port: connector.port, tabId: 1 });
+    const second = new FakeExtension({ port: connector.port, tabId: 2 });
+    try {
+      for (const [ext, tabId, url] of [
+        [first, 1, "https://one.example/"],
+        [second, 2, "https://two.example/"],
+      ] as const) {
+        await ext.connect();
+        await ext.waitForWelcome();
+        ext.send({ type: "page", url, tabId });
+      }
+      const urls = () => connector.listTabs().map((t) => t.url).sort();
+      await vi.waitFor(() => expect(urls()).toEqual(["https://one.example/", "https://two.example/"]));
+
+      const client = makeClient();
+      expect((await client.audit("seo", { tabId: 2 })).metadata.url).toBe("https://two.example/");
+      expect((await client.audit("seo", { tabId: 1 })).metadata.url).toBe("https://one.example/");
+      await expect(client.audit("seo", { tabId: 99 })).rejects.toThrow(/Unknown tab 99/);
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
   it("surfaces connector errors as thrown errors, not silent empties", async () => {
     const client = makeClient();
     // No extension connected, so a screenshot cannot succeed.
