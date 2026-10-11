@@ -8,7 +8,7 @@ import net from "node:net";
  * (or a model steered by prompt injection in page content) could point the
  * audit browser at loopback services, the LAN, or a cloud metadata endpoint,
  * then read the result back through the stored Lighthouse report — which
- * carries a screenshot of the rendered page. See GHSA (pending) / CWE-918.
+ * carries a screenshot of the rendered page. See GHSA-fm7v-38h4-4q7w / CWE-918.
  *
  * Every address is put in one of four classes:
  *
@@ -106,7 +106,7 @@ function isLocalhostName(host: string): boolean {
  */
 const LOOPBACK_ADDRESSES = ["127.0.0.1", "::1"];
 
-/** IPv4 embedded in an IPv6 address by mapping, NAT64 or 6to4, if any. */
+/** IPv4 embedded in an IPv6 address by mapping, translation, NAT64, 6to4 or the old compatible form, if any. */
 function embeddedIPv4(address: string): string | null {
   const lower = address.toLowerCase();
   const dotted = lower.match(/^(?:::ffff:|::ffff:0:|64:ff9b::|::)(\d+\.\d+\.\d+\.\d+)$/);
@@ -118,6 +118,13 @@ function embeddedIPv4(address: string): string | null {
   // ::ffff:a.b.c.d written in hex, and NAT64 64:ff9b::/96
   if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) return toV4(groups[6]!, groups[7]!);
   if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((g) => g === 0))
+    return toV4(groups[6]!, groups[7]!);
+  // IPv4-translated ::ffff:0:a.b.c.d in hex
+  if (groups.slice(0, 4).every((g) => g === 0) && groups[4] === 0xffff && groups[5] === 0)
+    return toV4(groups[6]!, groups[7]!);
+  // Deprecated IPv4-compatible ::a.b.c.d in hex, which is how URL parsing
+  // writes it: [::127.0.0.1] becomes [::7f00:1]. :: and ::1 are not IPv4.
+  if (groups.slice(0, 6).every((g) => g === 0) && (groups[6] !== 0 || groups[7]! > 1))
     return toV4(groups[6]!, groups[7]!);
   // Local-use NAT64 64:ff9b:1::/48 (RFC 8215): the IPv4 address is in the low 32 bits.
   if (groups[0] === 0x64 && groups[1] === 0xff9b && groups[2] === 1) return toV4(groups[6]!, groups[7]!);

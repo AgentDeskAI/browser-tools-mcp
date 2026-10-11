@@ -31,6 +31,14 @@ describe("classifyAddress", () => {
     ["[::1]", "loopback"],
     ["::ffff:127.0.0.1", "loopback"],
     ["::ffff:7f00:1", "loopback"],
+    // IPv4-compatible and IPv4-translated forms, written in hex the way URL
+    // parsing writes them: new URL("http://[::127.0.0.1]/").hostname is [::7f00:1].
+    ["::7f00:1", "loopback"],
+    ["::a9fe:a9fe", "blocked"],
+    ["::a00:1", "private"],
+    ["::ffff:0:7f00:1", "loopback"],
+    ["::ffff:0:a9fe:a9fe", "blocked"],
+    ["::2", "blocked"], // ::0.0.0.2
     ["10.0.0.5", "private"],
     ["172.16.0.1", "private"],
     ["172.31.255.255", "private"],
@@ -99,6 +107,15 @@ describe("resolveDestination", () => {
     }
     const mapped = new URL("http://[::ffff:169.254.169.254]/").hostname;
     expect((await resolveDestination(mapped, async () => [])).class).toBe("blocked");
+    for (const [raw, expected] of [
+      ["http://[::127.0.0.1]/", "loopback"],
+      ["http://[::169.254.169.254]/", "blocked"],
+      ["http://[::ffff:0:127.0.0.1]/", "loopback"],
+      ["http://[::10.0.0.1]/", "private"],
+    ]) {
+      const host = new URL(raw!).hostname;
+      expect((await resolveDestination(host, async () => [])).class, raw).toBe(expected);
+    }
   });
 });
 
