@@ -17,22 +17,42 @@ back as its `final-screenshot`.
 - **Audits no longer reach link-local, cloud metadata, or unvouched loopback
   and private addresses.** Link-local and metadata addresses (169.254.0.0/16,
   `metadata.google.internal`, AWS IMDS over IPv6, Alibaba, and the rest) are
-  never audited, in any spelling: IPv4-mapped IPv6, NAT64, 6to4, decimal, hex
-  and octal forms are all classified the same way. Pages on localhost or a
-  private network are audited only while that origin is open in a connected
-  tab (the normal dev-server flow keeps working), or when allowlisted.
+  never audited, in any spelling: IPv4-mapped, IPv4-compatible and
+  IPv4-translated IPv6, NAT64, 6to4, decimal, hex and octal forms are all
+  classified the same way. Pages on localhost or a private network are
+  audited only while that origin is open in a connected tab (the normal
+  dev-server flow keeps working), or when allowlisted. A tab vouches only for
+  a local name — an IP address, `localhost`, a single-label name, or a name
+  under `.test`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like — so
+  a public site the user has open cannot rebind its own name to a LAN address
+  and have that audited. A public name that points at a local address on
+  purpose (`lvh.me`, `nip.io`) needs `--audit-allow-origin`.
 - **Every request the audit browser makes is checked as it happens.** The
   browser runs behind an in-process proxy that resolves and classifies each
   request — redirects, iframes, fetches and websockets included — and
   connects to the address it vetted, so a public page cannot redirect or frame
   its way inside, and a rebinding name cannot change address after the check.
-  Lookups fail closed.
+  Lookups fail closed. WebRTC is kept off direct UDP, so it cannot go around
+  the proxy either.
+- **A local page reaches only the local origins vouched for.** Auditing
+  `http://localhost:3000` lets that page load `localhost:3000` (under any
+  loopback spelling) and the other origins open in a tab or allowlisted, not
+  every loopback and private address, so a dev server's open redirect cannot
+  carry the audit to another service. A page whose API runs on another local
+  port loads it once that port is open in a tab or passed to
+  `--audit-allow-origin`. A public page loads nothing local.
 - New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
   (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
   are not open in a tab. Even with private access allowed, link-local and
-  metadata addresses stay blocked.
+  metadata addresses stay blocked. They apply to the process that starts the
+  connector; one that attaches to a running connector warns that they are
+  ignored.
 - URLs with embedded credentials are rejected.
+- Audits now connect directly rather than through a system, PAC or
+  `HTTP(S)_PROXY` proxy. Handing requests to an outside proxy would let it
+  resolve names and reach addresses the audit policy never checked. On a
+  network where direct connections are blocked, audits of public sites fail.
 - `@agentdeskai/browser-tools-server` is affected through its dependency and
   now requires `@agentdeskai/browser-tools-mcp` `^2.0.3`.
 

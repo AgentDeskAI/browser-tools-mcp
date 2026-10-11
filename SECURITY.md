@@ -112,9 +112,10 @@ be, both are worth reporting.
 - Request bodies are size-limited; log retention is bounded and client-supplied
   limits are clamped.
 - The audit browser never reaches link-local or cloud metadata addresses, and
-  reaches loopback or private addresses only for a page the user has open in a
-  connected tab or has allowlisted. Every request it makes goes through a
-  checking proxy that connects to the address it vetted.
+  reaches a loopback or private origin only when the user has it open in a
+  connected tab under a local name, or has allowlisted it. Every request it
+  makes goes through a checking proxy that connects to the address it vetted,
+  and WebRTC is kept off direct UDP.
 
 These are covered by regression tests in
 `browser-tools-mcp/test/integration/connector-security.test.ts`, which assert

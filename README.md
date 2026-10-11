@@ -182,7 +182,10 @@ This tool captures whatever your browser sees, so it treats that data carefully:
   addresses are never audited. Pages on localhost or a private network are
   audited only while open in a connected tab (or allowlisted with
   `--audit-allow-origin`), and every request the audit browser makes —
-  redirects and subresources included — is checked again as it happens.
+  redirects and subresources included — is checked again as it happens. A
+  local page may load only the local origins that are open in a tab or
+  allowlisted, so if your app calls an API on another local port, open that
+  too or allowlist it. Audits connect directly, not through a system proxy.
 
 Report vulnerabilities per [SECURITY.md](SECURITY.md).
 
@@ -202,7 +205,7 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | `--connect <url>` | Attach to a connector already running elsewhere |
 | `--token <t>` | Auth token to use with `--connect` |
 | `--no-redact` | Disable credential scrubbing (not recommended) |
-| `--audit-allow-origin <o,o>` | Loopback/private origins audits may target without an open tab |
+| `--audit-allow-origin <o,o>` | Loopback/private origins audits may target or load without an open tab |
 | `--audit-allow-private-network` | Let audits reach any loopback/private address (not recommended) |
 
 To share one browser session between several MCP clients, start the connector
