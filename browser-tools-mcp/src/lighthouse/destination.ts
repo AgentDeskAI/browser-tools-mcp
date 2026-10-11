@@ -150,6 +150,37 @@ function expandIPv6(address: string): number[] | null {
   return all.map((g) => Number.parseInt(g, 16));
 }
 
+/** A host as both checks compare it: no brackets, no trailing dot, lower case. */
+export function normalizeHost(rawHost: string): string {
+  return rawHost.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+}
+
+/**
+ * Suffixes public DNS does not delegate: the special-use localhost, test
+ * (RFC 6761) and local (RFC 6762); home.arpa (RFC 8375); internal, reserved
+ * by ICANN for private use; home, corp and mail, withheld by ICANN over name
+ * collisions; and lan, the usual router default, which RFC 6762 appendix G
+ * lists among names in private use.
+ */
+const LOCAL_SUFFIXES = ["localhost", "test", "local", "home.arpa", "internal", "home", "corp", "mail", "lan"];
+
+/**
+ * Whether a host can only mean something local: an IP literal, a localhost
+ * name, a single-label name, or a name under a suffix that public DNS never
+ * delegates.
+ *
+ * A public DNS name is answered by whoever owns it, and they can point it at
+ * 10.0.0.5 the moment after the user visits. So a tab open on a public name
+ * vouches for nothing private, even when the name resolves privately now.
+ */
+export function isLocalName(rawHost: string): boolean {
+  const host = normalizeHost(rawHost);
+  if (!host) return false;
+  if (net.isIP(host)) return true;
+  if (!host.includes(".")) return true;
+  return LOCAL_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 /** Classifies a literal IP address. Anything that is not a valid IP is blocked. */
 export function classifyAddress(address: string): AddressClass {
   const bare = address.replace(/^\[|\]$/g, "").replace(/%.*$/, "");
@@ -202,7 +233,7 @@ export async function resolveDestination(
   rawHost: string,
   lookup: Lookup = systemLookup
 ): Promise<ResolvedDestination> {
-  const host = rawHost.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  const host = normalizeHost(rawHost);
 
   if (net.isIP(host)) return { host, addresses: [host], class: classifyAddress(host) };
   if (BLOCKED_NAMES.has(host)) return { host, addresses: [], class: "blocked" };
@@ -220,6 +251,29 @@ export async function resolveDestination(
   if (addresses.length === 0) return { host, addresses, class: "blocked" };
 
   return { host, addresses, class: worstClass(addresses.map(classifyAddress)) };
+}
+
+/**
+ * How the egress proxy matches a loopback or private destination against the
+ * origins an audit may load: host:port, scheme-blind because a CONNECT carries
+ * none. Every spelling of this machine (localhost, *.localhost, 127.x, ::1) is
+ * one host, so a page on localhost:3000 can still load 127.0.0.1:3000.
+ */
+export function destinationKey(rawHost: string, port: number | string): string {
+  const host = normalizeHost(rawHost);
+  const thisMachine = isLocalhostName(host) || (net.isIP(host) !== 0 && classifyAddress(host) === "loopback");
+  return `${thisMachine ? "loopback" : host}:${port}`;
+}
+
+/** destinationKey for an origin or url; null for anything that is not http(s). */
+export function destinationKeyOf(url: string | URL): string | null {
+  try {
+    const parsed = typeof url === "string" ? new URL(url) : url;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return destinationKey(parsed.hostname, parsed.port || (parsed.protocol === "https:" ? "443" : "80"));
+  } catch {
+    return null;
+  }
 }
 
 /** The scheme://host:port an origin check compares, with default ports made explicit. */

@@ -252,20 +252,38 @@ describe("request body limits", () => {
 describe("audit destination policy", () => {
   let guarded: Connector;
   let guardedDir: string;
-  const audited: Array<{ url: string; allowPrivate: boolean | undefined }> = [];
+  const audited: Array<{ url: string; allowPrivate: boolean | undefined; allowedOrigins?: string[] }> = [];
+  // What the attacker's name resolves to; flipped to stage a DNS rebinding.
+  let rebindTo = "93.184.215.14";
 
   beforeAll(async () => {
     guardedDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-"));
     guarded = await createConnector({
       port: 0,
       screenshotDir: guardedDir,
-      auditLookup: async (host) => (host === "intranet.test" ? ["10.0.0.7"] : ["93.184.215.14"]),
+      auditLookup: async (host) =>
+        host === "intranet.test" ? ["10.0.0.7"] : host === "rebind.example.com" ? [rebindTo] : ["93.184.215.14"],
       auditRunner: async ({ url, category, egress }) => {
-        audited.push({ url, allowPrivate: egress?.allowPrivate });
+        audited.push({
+          url,
+          allowPrivate: egress?.allowPrivate,
+          ...(egress?.allowedOrigins?.length ? { allowedOrigins: egress.allowedOrigins } : {}),
+        });
         return { category, score: 100, metadata: { url }, summary: {}, issues: [] } as any;
       },
     });
   });
+
+  async function openTab(tabId: number, url: string): Promise<FakeExtension> {
+    const ext = new FakeExtension({ port: guarded.port, tabId });
+    await ext.connect();
+    await ext.waitForWelcome();
+    ext.send({ type: "page", url, tabId });
+    await vi.waitFor(() => {
+      expect(guarded.listTabs().find((t) => t.tabId === tabId)?.url).toBe(url);
+    });
+    return ext;
+  }
 
   afterAll(async () => {
     await guarded?.close();
@@ -316,23 +334,83 @@ describe("audit destination policy", () => {
   });
 
   it("audits a localhost page the user has open in a connected tab", async () => {
-    const ext = new FakeExtension({ port: guarded.port, tabId: 1 });
-    await ext.connect();
-    await ext.waitForWelcome();
-    ext.send({ type: "page", url: "http://localhost:3000/dashboard", tabId: 1 });
-    await vi.waitFor(() => {
-      expect(guarded.listTabs().find((t) => t.tabId === 1)?.url).toBe("http://localhost:3000/dashboard");
-    });
+    const ext = await openTab(1, "http://localhost:3000/dashboard");
     try {
       const res = await audit("http://localhost:3000/other-route");
       expect(res.status).toBe(200);
-      expect(audited.at(-1)).toEqual({ url: "http://localhost:3000/other-route", allowPrivate: true });
+      // The page may load its own origin and nothing else local: not every
+      // loopback and private address, which an open redirect would reach.
+      expect(audited.at(-1)).toEqual({
+        url: "http://localhost:3000/other-route",
+        allowPrivate: false,
+        allowedOrigins: ["http://localhost:3000"],
+      });
 
       // Same host, different port: a different service, not vouched for.
       expect((await audit("http://localhost:3001/")).status).toBe(422);
     } finally {
       await ext.close();
     }
+  });
+
+  it("lets a vouched local page load the other vouched origins, and only those", async () => {
+    const app = await openTab(2, "http://localhost:5173/");
+    const api = await openTab(3, "http://192.168.1.20:8000/docs");
+    const elsewhere = await openTab(4, "https://example.com/");
+    try {
+      expect((await audit("http://localhost:5173/")).status).toBe(200);
+      const allowed = audited.at(-1)!.allowedOrigins ?? [];
+      expect(allowed).toEqual(expect.arrayContaining(["http://localhost:5173", "http://192.168.1.20:8000"]));
+      // A tab on a public site vouches for nothing local.
+      expect(allowed).not.toContain("https://example.com:443");
+    } finally {
+      await Promise.all([app.close(), api.close(), elsewhere.close()]);
+    }
+  });
+
+  /**
+   * DNS rebinding through a tab: the user browses rebind.example.com (public
+   * when they load it), its owner then points the name at the LAN, and a
+   * prompt injection on the page asks for an audit of it. A tab vouches for
+   * the name, not for whatever the name's owner points it at next.
+   */
+  it("does not let a tab on a public name vouch for it once it points inside", async () => {
+    const ext = await openTab(5, "http://rebind.example.com/");
+    try {
+      const before = audited.length;
+      rebindTo = "10.0.0.5";
+      const res = await audit("http://rebind.example.com/");
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatch(/public DNS name/);
+      expect(audited.length).toBe(before);
+
+      // Pointed back at a public address, it is an ordinary public audit.
+      rebindTo = "93.184.215.14";
+      expect((await audit("http://rebind.example.com/")).status).toBe(200);
+      expect(audited.at(-1)).toEqual({ url: "http://rebind.example.com/", allowPrivate: false });
+    } finally {
+      rebindTo = "93.184.215.14";
+      await ext.close();
+    }
+  });
+
+  it("stops vouching for a page once its tab is gone", async () => {
+    const ext = await openTab(6, "http://localhost:7000/");
+    expect((await audit("http://localhost:7000/")).status).toBe(200);
+    await ext.close();
+    await vi.waitFor(() => expect(guarded.listTabs().find((t) => t.tabId === 6)).toBeUndefined());
+
+    const res = await audit("http://localhost:7000/");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/not open in a connected browser tab/);
+  });
+
+  it("refuses a url with embedded credentials before deciding anything else", async () => {
+    const before = audited.length;
+    const res = await audit("https://user:pass@example.com/");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/embeds credentials/);
+    expect(audited.length).toBe(before);
   });
 
   it("honours --audit-allow-origin, with or without a scheme, as an exact origin", async () => {

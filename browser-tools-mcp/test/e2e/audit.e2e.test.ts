@@ -139,9 +139,24 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
   describe("egress policy in a real browser", () => {
     let hostile: http.Server;
     let base: string;
+    // Another service on this machine that no tab vouches for.
+    let other: http.Server;
+    let otherPort: number;
+    const otherHits: string[] = [];
 
     beforeAll(async () => {
+      other = http.createServer((req, res) => {
+        otherHits.push(req.url ?? "");
+        res.end("OTHER-LOCAL-SERVICE");
+      });
+      await new Promise<void>((r) => other.listen(0, "127.0.0.1", () => r()));
+      otherPort = (other.address() as AddressInfo).port;
+
       hostile = http.createServer((req, res) => {
+        if (req.url === "/redirect-local") {
+          res.writeHead(302, { Location: `http://127.0.0.1:${otherPort}/admin` }).end();
+          return;
+        }
         if (req.url?.startsWith("/webrtc")) {
           // ICE gathering sends a STUN binding request to the server below
           // as soon as the local description is set.
@@ -174,7 +189,10 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
       base = `http://127.0.0.1:${(hostile.address() as AddressInfo).port}`;
     });
 
-    afterAll(() => hostile?.close());
+    afterAll(() => {
+      hostile?.close();
+      other?.close();
+    });
 
     // The error has to name the refused host: that is only known if the
     // request reached the proxy. A looser match would also accept Chrome
@@ -221,6 +239,18 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
         lhr?.audits?.["network-requests"]?.details?.items ?? [];
       const framed = requests.filter((r) => r.url.startsWith("http://192.0.2.1"));
       for (const r of framed) expect(r.statusCode === 403 || r.statusCode === -1).toBe(true);
+    }, 180_000);
+
+    /**
+     * The audited page is local and allowed, but that vouches for its own
+     * origin only. A dev server's open redirect (or a frame on its page) must
+     * not carry the audit to another service on the machine.
+     */
+    it("refuses a redirect from the audited local page to another local port", async () => {
+      await expect(
+        runLighthouseAudit({ url: `${base}/redirect-local`, category: "seo" })
+      ).rejects.toThrow(/tried to reach 127\.0\.0\.1/);
+      expect(otherHits).toEqual([]);
     }, 180_000);
 
     it("keeps WebRTC from sending UDP around the proxy", async () => {

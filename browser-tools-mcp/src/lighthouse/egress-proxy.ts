@@ -2,7 +2,16 @@ import http from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import { createLogger } from "../util/logger.js";
-import { resolveDestination, systemLookup, type AddressClass, type Lookup } from "./destination.js";
+import {
+  destinationKey,
+  destinationKeyOf,
+  normalizeHost,
+  resolveDestination,
+  systemLookup,
+  type AddressClass,
+  type Lookup,
+  type ResolvedDestination,
+} from "./destination.js";
 
 const log = createLogger("lighthouse");
 
@@ -23,8 +32,17 @@ const log = createLogger("lighthouse");
  *   are held to the same rule.
  */
 export interface EgressPolicy {
-  /** Loopback and private destinations allowed (blocked ones never are). */
+  /** Every loopback and private destination allowed (blocked ones never are). */
   allowPrivate: boolean;
+  /**
+   * Loopback and private origins allowed one at a time when `allowPrivate` is
+   * off — the audited page's own origin and the others vouched for with it.
+   * Trusting one local origin must not open every other one: a dev server's
+   * open redirect or a framed page would otherwise reach the router, another
+   * local service, or the audit browser's own debugging port. Matched by
+   * host:port (see `destinationKey`).
+   */
+  allowedOrigins?: string[];
   /** Injectable for tests. */
   lookup?: Lookup;
   /** How long one connection attempt to one address may take. */
@@ -38,11 +56,8 @@ export interface EgressProxy {
   close(): Promise<void>;
 }
 
-function permitted(cls: AddressClass, policy: EgressPolicy): boolean {
-  if (cls === "blocked") return false;
-  if (cls === "loopback" || cls === "private") return policy.allowPrivate;
-  return true;
-}
+/** Refusals recorded and logged per audit; a hostile page can invent hostnames without end. */
+const MAX_REPORTED_REFUSALS = 100;
 
 function splitHostPort(authority: string, defaultPort: number): { host: string; port: number } | null {
   const match = authority.match(/^\[([^\]]+)\](?::(\d+))?$/) ?? authority.match(/^([^:]+)(?::(\d+))?$/);
@@ -93,16 +108,42 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   const connectTimeoutMs = policy.connectTimeoutMs ?? 10_000;
   const refused: EgressProxy["refused"] = [];
   const warned = new Set<string>();
+  const allowedLocal = new Set(
+    (policy.allowedOrigins ?? []).map((origin) => destinationKeyOf(origin)).filter((key) => key !== null)
+  );
+
+  // One answer per host for the whole audit. A page asks for the same hosts
+  // over and over, and a lookup per request would slow down the very loads a
+  // performance audit is timing. It also keeps every request to a host on the
+  // addresses that were checked first.
+  const resolved = new Map<string, Promise<ResolvedDestination>>();
+  const resolve = (host: string) => {
+    const key = normalizeHost(host);
+    let pending = resolved.get(key);
+    if (!pending) {
+      pending = resolveDestination(key, lookup);
+      resolved.set(key, pending);
+    }
+    return pending;
+  };
+
+  function permitted(dest: ResolvedDestination, port: number): boolean {
+    if (dest.class === "blocked") return false;
+    if (dest.class === "public") return true;
+    return policy.allowPrivate || allowedLocal.has(destinationKey(dest.host, port));
+  }
 
   /** Resolves, classifies and returns the vetted addresses to connect to, or null. */
-  async function vet(host: string): Promise<string[] | null> {
-    const dest = await resolveDestination(host, lookup);
-    if (!permitted(dest.class, policy)) {
-      refused.push({ host: dest.host, class: dest.class });
-      // Once per host: a hostile page can ask for thousands of subresources.
-      if (!warned.has(dest.host)) {
-        warned.add(dest.host);
-        log.warn(`Audit browser blocked from ${dest.host} (${dest.class} address)`);
+  async function vet(host: string, port: number): Promise<string[] | null> {
+    const dest = await resolve(host);
+    if (!permitted(dest, port)) {
+      // Once per destination, and only so many: a hostile page can ask for
+      // thousands of subresources, from as many made-up hostnames.
+      const label = dest.class === "blocked" ? dest.host : `${dest.host}:${port}`;
+      if (!warned.has(label) && warned.size < MAX_REPORTED_REFUSALS) {
+        warned.add(label);
+        refused.push({ host: dest.host, class: dest.class });
+        log.warn(`Audit browser blocked from ${label} (${dest.class} address)`);
       }
       return null;
     }
@@ -137,7 +178,8 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       res.writeHead(400).end();
       return;
     }
-    const vetted = await vet(target.hostname);
+    const port = Number(target.port || 80);
+    const vetted = await vet(target.hostname, port);
     if (!vetted) {
       res.writeHead(403, { "content-type": "text/plain" }).end("Blocked by browser-tools-mcp audit policy");
       return;
@@ -149,7 +191,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       {
         agent,
         host: target.hostname,
-        port: Number(target.port || 80),
+        port,
         vetted,
         method: req.method,
         path: `${target.pathname}${target.search}`,
@@ -172,7 +214,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   server.on("connect", async (req: http.IncomingMessage, client: Duplex, head: Buffer) => {
     client.on("error", () => client.destroy());
     const authority = splitHostPort(req.url ?? "", 443);
-    const vetted = authority ? await vet(authority.host) : null;
+    const vetted = authority ? await vet(authority.host, authority.port) : null;
     if (!authority || !vetted) {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;

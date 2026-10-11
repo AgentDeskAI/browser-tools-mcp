@@ -16,7 +16,7 @@ export interface CliOptions {
   standalone: boolean;
   /** Print every captured entry as it arrives. */
   verbose: boolean;
-  /** Loopback/private origins audits may target without an open tab. */
+  /** Loopback/private origins audits may target or load without an open tab. */
   auditAllowedOrigins?: string[];
   /** Let audits reach any loopback/private address (not recommended). */
   auditAllowPrivateNetwork: boolean;
@@ -177,7 +177,7 @@ Options:
       --no-redact          Do not scrub credentials from captured data (not recommended)
       --audit-allow-origin <o,o>
                            Loopback/private origins (e.g. http://localhost:3000) that audits
-                           may target even when no tab is open on them
+                           may target or load even when no tab is open on them
       --audit-allow-private-network
                            Let audits reach any loopback or private address (not recommended)
 

@@ -132,6 +132,56 @@ describe("audit egress proxy", () => {
     }
   });
 
+  /**
+   * Vouching for one local origin (the dev server open in a tab) must not
+   * vouch for the rest of the machine or the LAN: an open redirect such as
+   * /login?next=http://127.0.0.1:8500/ would otherwise carry the audit there.
+   */
+  it("allows only the vouched local origins when private access is not wholesale", async () => {
+    const otherPort = internalPort === 65535 ? internalPort - 1 : internalPort + 1;
+    const proxy = await startEgressProxy({
+      allowPrivate: false,
+      allowedOrigins: [`http://localhost:${internalPort}`],
+      lookup: async (host) => (host === "router.test" ? ["192.168.1.1"] : ["93.184.215.14"]),
+    });
+    try {
+      // The vouched origin, by any loopback spelling of it.
+      expect((await viaProxy(proxy.port, `http://localhost:${internalPort}/`)).status).toBe(200);
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/`)).status).toBe(200);
+      expect(await connectVia(proxy.port, `[::1]:${internalPort}`)).toMatch(/200|502/);
+      expect(await connectVia(proxy.port, `127.0.0.1:${internalPort}`)).toMatch(/200/);
+
+      // Another port on this machine, and the LAN: not vouched.
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${otherPort}/`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `localhost:${otherPort}`)).toMatch(/403/);
+      expect((await viaProxy(proxy.port, "http://router.test/")).status).toBe(403);
+      expect((await viaProxy(proxy.port, "http://192.168.1.1/")).status).toBe(403);
+      expect(proxy.refused.map((r) => r.class)).toEqual(["loopback", "loopback", "private", "private"]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("asks DNS once per host for the whole audit", async () => {
+    const asked: string[] = [];
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      lookup: async (host) => {
+        asked.push(host);
+        return ["127.0.0.1"];
+      },
+    });
+    try {
+      for (let i = 0; i < 3; i++) {
+        expect((await viaProxy(proxy.port, `http://dev.test:${internalPort}/${i}`)).status).toBe(200);
+      }
+      expect(await connectVia(proxy.port, `DEV.test.:${internalPort}`)).toMatch(/200/);
+      expect(asked).toEqual(["dev.test"]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("closes without waiting on open tunnels", async () => {
     const proxy = await startEgressProxy({ allowPrivate: true, lookup: async () => ["127.0.0.1"] });
     const socket = net.connect(proxy.port, "127.0.0.1");

@@ -1,7 +1,7 @@
 import { createLogger } from "../util/logger.js";
 import { extractAuditReport } from "./extract.js";
 import { describeLaunchFailure, findAuditBrowser, NoBrowserError, type FoundBrowser } from "./find-browser.js";
-import { resolveDestination, type Lookup } from "./destination.js";
+import { originOf, resolveDestination, type Lookup } from "./destination.js";
 import { AUDIT_BROWSER_PREFS, proxyChromeFlags, startEgressProxy, type EgressProxy } from "./egress-proxy.js";
 import type { AuditCategory, AuditReport, LighthouseResultLike } from "./types.js";
 
@@ -21,11 +21,12 @@ export interface AuditOptions {
   /**
    * Where the audit browser may go. Blocked addresses (link-local, metadata,
    * multicast, reserved) are always refused. Loopback and private addresses
-   * are allowed when `allowPrivate` is true; by default that is the case only
-   * when the audited page is itself local, because the caller (the connector)
-   * has already decided that page may be audited.
+   * are refused except for the origins in `allowedOrigins`, or all of them
+   * when `allowPrivate` is true. A local audited page's own origin is always
+   * allowed, because the caller (the connector) has already decided that page
+   * may be audited.
    */
-  egress?: { allowPrivate?: boolean; lookup?: Lookup };
+  egress?: { allowPrivate?: boolean; allowedOrigins?: string[]; lookup?: Lookup };
 }
 
 export class AuditError extends Error {
@@ -117,6 +118,18 @@ export function assertAuditableUrl(url: string): URL {
   return parsed;
 }
 
+/**
+ * Lighthouse runtime errors that mean the page itself never loaded. Only
+ * these are blamed on a refused request; a page that loaded and then failed
+ * some other way keeps Lighthouse's own explanation.
+ */
+const DOCUMENT_LOAD_FAILURES = new Set([
+  "NO_DOCUMENT_REQUEST",
+  "FAILED_DOCUMENT_REQUEST",
+  "ERRORED_DOCUMENT_REQUEST",
+  "CHROME_INTERSTITIAL_ERROR",
+]);
+
 const CHROME_FLAGS = [
   "--headless=new",
   "--disable-gpu",
@@ -147,8 +160,8 @@ export async function runLighthouseAudit(
         `unresolvable address.`
     );
   }
-  const allowPrivate =
-    options.egress?.allowPrivate ?? (top.class === "loopback" || top.class === "private");
+  const allowedOrigins = [...(options.egress?.allowedOrigins ?? [])];
+  if (top.class !== "public") allowedOrigins.push(originOf(parsed)!);
 
   let chrome: { port: number; kill: () => Promise<void> } | undefined;
   let chosen: FoundBrowser | undefined;
@@ -156,7 +169,8 @@ export async function runLighthouseAudit(
 
   try {
     proxy = await startEgressProxy({
-      allowPrivate,
+      allowPrivate: options.egress?.allowPrivate ?? false,
+      allowedOrigins,
       ...(options.egress?.lookup ? { lookup: options.egress.lookup } : {}),
     });
 
@@ -190,7 +204,8 @@ export async function runLighthouseAudit(
 
     const lhr = result?.lhr;
     if (!lhr) throw new AuditError("Lighthouse returned no result");
-    if ((lhr as { runtimeError?: { code?: string } }).runtimeError && proxy.refused.length > 0) {
+    const runtimeError = (lhr as { runtimeError?: { code?: string } }).runtimeError;
+    if (runtimeError && DOCUMENT_LOAD_FAILURES.has(runtimeError.code ?? "") && proxy.refused.length > 0) {
       throw new AuditError(
         `The audited page tried to reach ${proxy.refused[0]!.host}, which audits are not allowed to load.`
       );

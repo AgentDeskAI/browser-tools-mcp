@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { classifyAddress, resolveDestination, originOf, worstClass } from "../../src/lighthouse/destination";
+import {
+  classifyAddress,
+  resolveDestination,
+  originOf,
+  worstClass,
+  isLocalName,
+  destinationKey,
+  destinationKeyOf,
+} from "../../src/lighthouse/destination";
 
 /**
  * Regression tests for the audit SSRF (CWE-918): the audit browser must not be
@@ -116,6 +124,53 @@ describe("resolveDestination", () => {
       const host = new URL(raw!).hostname;
       expect((await resolveDestination(host, async () => [])).class, raw).toBe(expected);
     }
+  });
+});
+
+describe("isLocalName", () => {
+  it("accepts names no public DNS owner can repoint", () => {
+    for (const host of [
+      "localhost",
+      "app.localhost",
+      "127.0.0.1",
+      "[::1]",
+      "192.168.1.10",
+      "devbox",
+      "myapp.test",
+      "printer.local",
+      "api.internal",
+      "nas.home.arpa",
+      "router.lan",
+      "Router.LAN.",
+    ]) {
+      expect(isLocalName(host), host).toBe(true);
+    }
+  });
+
+  it("rejects public DNS names, even ones that point at loopback today", () => {
+    for (const host of ["evil.example.com", "lvh.me", "127.0.0.1.nip.io", "localhost.evil.com", "test.com", ""]) {
+      expect(isLocalName(host), host).toBe(false);
+    }
+  });
+});
+
+describe("destinationKey", () => {
+  it("treats every spelling of this machine as one host, port by port", () => {
+    for (const host of ["localhost", "app.localhost", "127.0.0.1", "127.0.0.2", "::1", "[::1]", "::ffff:127.0.0.1"]) {
+      expect(destinationKey(host, 3000), host).toBe("loopback:3000");
+    }
+    expect(destinationKey("localhost", 3001)).toBe("loopback:3001");
+    expect(destinationKey("192.168.1.10", 80)).toBe("192.168.1.10:80");
+    // A public name that resolves to loopback is still its own name.
+    expect(destinationKey("lvh.me", 3000)).toBe("lvh.me:3000");
+  });
+
+  it("derives keys from origins with default ports made explicit", () => {
+    expect(destinationKeyOf("http://localhost:3000")).toBe("loopback:3000");
+    expect(destinationKeyOf("http://127.0.0.1/")).toBe("loopback:80");
+    expect(destinationKeyOf("https://router.lan")).toBe("router.lan:443");
+    expect(destinationKeyOf("chrome://settings")).toBeNull();
+    expect(destinationKeyOf("not a url")).toBeNull();
   });
 });
 

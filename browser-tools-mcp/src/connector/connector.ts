@@ -30,8 +30,14 @@ import {
   parseImageDataUrl,
   withExtension,
 } from "../util/image.js";
-import { AuditError, runLighthouseAudit, type AuditHooks, type AuditOptions } from "../lighthouse/runner.js";
-import { originOf, resolveDestination } from "../lighthouse/destination.js";
+import {
+  AuditError,
+  assertAuditableUrl,
+  runLighthouseAudit,
+  type AuditHooks,
+  type AuditOptions,
+} from "../lighthouse/runner.js";
+import { isLocalName, originOf, resolveDestination } from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -92,7 +98,8 @@ export interface ConnectorConfig {
   verbose?: boolean;
   /**
    * Extra origins (scheme://host:port) on loopback or a private network that
-   * audits may target even when no connected tab is on them.
+   * audits may target, and audited local pages may load, even when no
+   * connected tab is on them.
    */
   auditAllowedOrigins?: string[];
   /**
@@ -1046,16 +1053,35 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     else log.warn(`Ignoring audit-allow-origin ${JSON.stringify(raw)}: not an http(s) origin`);
   }
 
-  /** Origins the user has open in a connected tab, plus any configured ones. */
-  function vouchedOrigins(): Set<string> {
-    const origins = new Set<string>(configuredAuditOrigins);
+  /** Origins of the pages open in a connected tab right now. */
+  function openOrigins(): Set<string> {
+    const origins = new Set<string>();
     for (const record of tabs.values()) {
       const origin = record.url ? originOf(record.url) : null;
       if (origin) origins.add(origin);
     }
-    const current = store.getCurrentPage().url;
-    const currentOrigin = current ? originOf(current) : null;
-    if (currentOrigin) origins.add(currentOrigin);
+    // An extension that has connected without naming its tab reports its page
+    // with no tab to file it under. That page counts only while such a socket
+    // is open and no tab is known; otherwise the last reported url is a page
+    // the user has since left, and it must not keep vouching.
+    if (tabs.size === 0 && connections.size > 0) {
+      const current = store.getCurrentPage().url;
+      const origin = current ? originOf(current) : null;
+      if (origin) origins.add(origin);
+    }
+    return origins;
+  }
+
+  /**
+   * Loopback and private origins an audit may load: the configured ones, and
+   * the ones open in a connected tab under a local name. A tab on a public
+   * name vouches for nothing private (see `isLocalName`).
+   */
+  function vouchedOrigins(): Set<string> {
+    const origins = new Set<string>(configuredAuditOrigins);
+    for (const origin of openOrigins()) {
+      if (isLocalName(new URL(origin).hostname)) origins.add(origin);
+    }
     return origins;
   }
 
@@ -1068,17 +1094,15 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
    * open in a connected tab — the user went there, and the extension already
    * captures that page — or are explicitly allowlisted. Link-local and cloud
    * metadata addresses are never allowed.
+   *
+   * The answer also says what the page may load. A public page loads nothing
+   * local. A local page loads the vouched origins and no other local ones, so
+   * an open redirect or a framed page cannot carry the audit further inside.
    */
-  async function checkAuditTarget(url: string): Promise<{ allowPrivate: boolean }> {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new AuditError(`Not a valid URL: ${JSON.stringify(url)}`);
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new AuditError(`Cannot audit ${parsed.protocol} URLs — navigate to an http(s) page first.`);
-    }
+  async function checkAuditTarget(
+    url: string
+  ): Promise<{ allowPrivate: boolean; allowedOrigins: string[] }> {
+    const parsed = assertAuditableUrl(url);
     const dest = await resolveDestination(parsed.hostname, config.auditLookup);
     if (dest.class === "blocked") {
       throw new AuditError(
@@ -1086,16 +1110,26 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           `or unresolvable address.`
       );
     }
-    if (dest.class === "public") return { allowPrivate: config.auditAllowPrivateNetwork === true };
-    if (config.auditAllowPrivateNetwork) return { allowPrivate: true };
+    if (config.auditAllowPrivateNetwork) return { allowPrivate: true, allowedOrigins: [] };
+    if (dest.class === "public") return { allowPrivate: false, allowedOrigins: [] };
 
-    const origin = originOf(parsed);
-    if (origin && vouchedOrigins().has(origin)) return { allowPrivate: true };
+    const origin = originOf(parsed)!;
+    const vouched = vouchedOrigins();
+    if (vouched.has(origin)) return { allowPrivate: false, allowedOrigins: [...vouched] };
+
+    const where = dest.class === "loopback" ? "this machine" : "a private network";
+    if (openOrigins().has(origin)) {
+      throw new AuditError(
+        `Refusing to audit ${origin}: ${parsed.hostname} is a public DNS name that points at ${where}. ` +
+          `An open tab only vouches for local names (IP addresses, localhost, .test, .local and the ` +
+          `like), because whoever runs a public name can point it anywhere. If it is yours, allow it ` +
+          `with --audit-allow-origin.`
+      );
+    }
     throw new AuditError(
-      `Refusing to audit ${origin ?? parsed.hostname}: it is on ${
-        dest.class === "loopback" ? "this machine" : "a private network"
-      } and is not open in a connected browser tab. Open it in Chrome with DevTools open and ` +
-        `audit it from there, or allow it with --audit-allow-origin.`
+      `Refusing to audit ${origin}: it is on ${where} and is not open in a connected browser tab. ` +
+        `Open it in Chrome with DevTools open and audit it from there, or allow it with ` +
+        `--audit-allow-origin.`
     );
   }
 
