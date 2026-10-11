@@ -49,7 +49,10 @@ afterAll(async () => {
 });
 
 async function audit(category: string, url: string) {
-  return request(connector.app)
+  // The live server rather than request(app): a throwaway server per request
+  // now and then resets the connection under parallel load, and this file
+  // makes a lot of requests.
+  return request(`http://127.0.0.1:${connector.port}`)
     .post(`/api/audit/${category}`)
     .set("Authorization", `Bearer ${connector.token}`)
     .send({ url });

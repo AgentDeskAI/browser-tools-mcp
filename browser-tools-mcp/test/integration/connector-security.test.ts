@@ -294,7 +294,10 @@ describe("audit destination policy", () => {
   });
 
   async function audit(url: string) {
-    return request(guarded.app)
+    // The live server rather than request(app): a throwaway server per
+    // request now and then resets the connection under parallel load, and
+    // this block makes a lot of requests.
+    return request(`http://127.0.0.1:${guarded.port}`)
       .post("/api/audit/performance")
       .set("Authorization", `Bearer ${guarded.token}`)
       .send({ url });
@@ -487,7 +490,7 @@ describe("audit destination policy", () => {
     });
     try {
       const post = (url: string) =>
-        request(allowed.app)
+        request(`http://127.0.0.1:${allowed.port}`)
           .post("/api/audit/seo")
           .set("Authorization", `Bearer ${allowed.token}`)
           .send({ url });
