@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
-import { startEgressProxy } from "../../src/lighthouse/egress-proxy";
+import { AUDIT_BROWSER_PREFS, proxyChromeFlags, startEgressProxy } from "../../src/lighthouse/egress-proxy";
 
 /**
  * The proxy every audit-browser request goes through. Redirects, frames and
@@ -142,5 +142,16 @@ describe("audit egress proxy", () => {
     await proxy.close();
     expect(Date.now() - started).toBeLessThan(2_000);
     await new Promise<void>((r) => (socket.destroyed ? r() : socket.once("close", () => r())));
+  });
+});
+
+describe("audit browser flags", () => {
+  it("routes everything through the proxy and keeps WebRTC off direct UDP", () => {
+    expect(proxyChromeFlags(4321)).toEqual([
+      "--proxy-server=http://127.0.0.1:4321",
+      "--proxy-bypass-list=<-loopback>",
+      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ]);
+    expect(AUDIT_BROWSER_PREFS).toEqual({ webrtc: { ip_handling_policy: "disable_non_proxied_udp" } });
   });
 });

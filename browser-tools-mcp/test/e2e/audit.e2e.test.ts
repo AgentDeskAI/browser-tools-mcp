@@ -5,6 +5,7 @@ import { chromium } from "playwright";
 import { runLighthouseAudit, AuditError, assertAuditableUrl } from "../../src/lighthouse/runner";
 import { startFixtureServer, type FixtureServer } from "../fixtures/server";
 import http from "node:http";
+import dgram from "node:dgram";
 import type { AddressInfo } from "node:net";
 
 /**
@@ -141,6 +142,20 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
 
     beforeAll(async () => {
       hostile = http.createServer((req, res) => {
+        if (req.url?.startsWith("/webrtc")) {
+          // ICE gathering sends a STUN binding request to the server below
+          // as soon as the local description is set.
+          res.writeHead(200, { "content-type": "text/html" });
+          res.end(
+            '<!doctype html><html lang="en"><head><title>webrtc</title></head><body><h1>webrtc</h1><script>' +
+              'const port = new URLSearchParams(location.search).get("port");' +
+              'const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:" + port }] });' +
+              'pc.createDataChannel("probe");' +
+              "pc.createOffer().then((offer) => pc.setLocalDescription(offer));" +
+              "</script></body></html>"
+          );
+          return;
+        }
         if (req.url === "/redirect") {
           res.writeHead(302, { Location: "http://192.0.2.1/latest/meta-data/" }).end();
           return;
@@ -206,6 +221,23 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
         lhr?.audits?.["network-requests"]?.details?.items ?? [];
       const framed = requests.filter((r) => r.url.startsWith("http://192.0.2.1"));
       for (const r of framed) expect(r.statusCode === 403 || r.statusCode === -1).toBe(true);
+    }, 180_000);
+
+    it("keeps WebRTC from sending UDP around the proxy", async () => {
+      const stun = dgram.createSocket("udp4");
+      const packets: Buffer[] = [];
+      stun.on("message", (message) => packets.push(message));
+      await new Promise<void>((r) => stun.bind(0, "127.0.0.1", () => r()));
+      try {
+        const report = await runLighthouseAudit({
+          url: `${base}/webrtc?port=${stun.address().port}`,
+          category: "seo",
+        });
+        expect(report.score).toBeTypeOf("number");
+        expect(packets).toEqual([]);
+      } finally {
+        stun.close();
+      }
     }, 180_000);
 
     it("refuses a metadata address before launching a browser", async () => {

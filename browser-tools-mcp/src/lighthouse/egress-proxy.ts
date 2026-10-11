@@ -235,5 +235,19 @@ export function proxyChromeFlags(port: number): string[] {
     // implicit bypass rules, link-local included (that is where cloud metadata
     // lives). The e2e suite checks this against a real browser.
     "--proxy-bypass-list=<-loopback>",
+    // WebRTC sends UDP straight past an HTTP proxy, so a page could probe
+    // internal hosts and ports with STUN/TURN. This leaves WebRTC only the
+    // TCP path through the proxy, where the same rule applies. Set again as a
+    // preference below; the e2e suite checks that no UDP gets out.
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
   ];
 }
+
+/**
+ * Profile preferences for the audit browser. The WebRTC policy is set here as
+ * well as on the command line because the switch has been renamed (current
+ * Chrome no longer knows --force-webrtc-ip-handling-policy) while the
+ * preference has not, and the audit may run in any installed Chromium-based
+ * browser.
+ */
+export const AUDIT_BROWSER_PREFS = { webrtc: { ip_handling_policy: "disable_non_proxied_udp" } };

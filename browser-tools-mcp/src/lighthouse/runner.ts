@@ -2,7 +2,7 @@ import { createLogger } from "../util/logger.js";
 import { extractAuditReport } from "./extract.js";
 import { describeLaunchFailure, findAuditBrowser, NoBrowserError, type FoundBrowser } from "./find-browser.js";
 import { resolveDestination, type Lookup } from "./destination.js";
-import { proxyChromeFlags, startEgressProxy, type EgressProxy } from "./egress-proxy.js";
+import { AUDIT_BROWSER_PREFS, proxyChromeFlags, startEgressProxy, type EgressProxy } from "./egress-proxy.js";
 import type { AuditCategory, AuditReport, LighthouseResultLike } from "./types.js";
 
 const log = createLogger("lighthouse");
@@ -177,6 +177,7 @@ export async function runLighthouseAudit(
     chrome = (await chromeLauncher.launch({
       chromeFlags: [...CHROME_FLAGS, ...proxyChromeFlags(proxy.port)],
       chromePath: browser.path,
+      prefs: AUDIT_BROWSER_PREFS,
     })) as unknown as { port: number; kill: () => Promise<void> };
 
     const flags = await buildLighthouseFlags({ category, device, port: chrome.port, timeoutMs });
