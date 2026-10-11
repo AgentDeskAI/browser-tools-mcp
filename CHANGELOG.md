@@ -46,8 +46,8 @@ back as its `final-screenshot`.
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
   are not open in a tab. Even with private access allowed, link-local and
   metadata addresses stay blocked. They apply to the process that starts the
-  connector; one that attaches to a running connector warns that they are
-  ignored.
+  connector (`browser-tools-connector --help` lists them); one that attaches
+  to a running connector warns that they are ignored.
 - URLs with embedded credentials are rejected.
 - Audits now connect directly rather than through a system, PAC or
   `HTTP(S)_PROXY` proxy. Handing requests to an outside proxy would let it

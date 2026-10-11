@@ -59,7 +59,9 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     redact: env["BROWSER_TOOLS_REDACT"] !== "false",
     standalone: false,
     verbose: env["BROWSER_TOOLS_VERBOSE"] === "true" || env["BROWSER_TOOLS_VERBOSE"] === "1",
-    auditAllowPrivateNetwork: env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "true",
+    auditAllowPrivateNetwork:
+      env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "true" ||
+      env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "1",
     ...(splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"])
       ? { auditAllowedOrigins: splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"]) }
       : {}),
