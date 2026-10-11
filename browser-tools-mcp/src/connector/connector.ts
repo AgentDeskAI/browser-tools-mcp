@@ -872,7 +872,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           store.setCurrentPage({ url, tabId: connection.tabId });
         } else if (!record) {
           store.setCurrentPage({ url, tabId: message["tabId"] });
-          if (url && connection.tabId === null) connection.pageUrl = url;
+          // An empty url (chrome://, a failed load) replaces the old page too:
+          // the socket is no longer on it.
+          if (connection.tabId === null) connection.pageUrl = url || undefined;
         }
         break;
       }
@@ -1014,6 +1016,13 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   ): Promise<AuditReport> {
     const named = options.tabId !== undefined ? resolveTabId(options.tabId) : null;
     const namedUrl = named !== null ? tabs.get(String(named))?.url : undefined;
+    // A named tab that has not reported its page yet must not quietly become
+    // whatever page the store saw last, which may be another tab's.
+    if (named !== null && !namedUrl && !options.url) {
+      throw new AuditError(
+        `Tab ${named} has not reported its page yet. Wait for it to load, or pass a url explicitly.`
+      );
+    }
     const url = options.url || namedUrl || store.getCurrentPage().url;
     if (!url) {
       throw new AuditError(

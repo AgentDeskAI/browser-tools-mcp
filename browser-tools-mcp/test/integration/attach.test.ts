@@ -204,6 +204,17 @@ describe("HttpConnectorClient against a live connector", () => {
       expect((await client.audit("seo", { tabId: 2 })).metadata.url).toBe("https://two.example/");
       expect((await client.audit("seo", { tabId: 1 })).metadata.url).toBe("https://one.example/");
       await expect(client.audit("seo", { tabId: 99 })).rejects.toThrow(/Unknown tab 99/);
+
+      // A tab that has not said where it is gets an error, not another tab's page.
+      const quiet = new FakeExtension({ port: connector.port, tabId: 3 });
+      try {
+        await quiet.connect();
+        await quiet.waitForWelcome();
+        await vi.waitFor(() => expect(connector.listTabs().map((t) => t.tabId)).toContain(3));
+        await expect(client.audit("seo", { tabId: 3 })).rejects.toThrow(/Tab 3 has not reported its page/);
+      } finally {
+        await quiet.close();
+      }
     } finally {
       await Promise.all([first.close(), second.close()]);
     }
