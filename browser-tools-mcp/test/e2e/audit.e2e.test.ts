@@ -3,6 +3,7 @@ import { browserAvailability } from "../helpers/browser-available";
 import { chromium } from "playwright";
 
 import { runLighthouseAudit, AuditError, assertAuditableUrl } from "../../src/lighthouse/runner";
+import { systemLookup } from "../../src/lighthouse/destination";
 import { startFixtureServer, type FixtureServer } from "../fixtures/server";
 import http from "node:http";
 import dgram from "node:dgram";
@@ -23,6 +24,13 @@ if (!browserSupport.usable) console.warn(`\n  SKIPPED: ${browserSupport.reason}\
 
 let fixture: FixtureServer;
 
+/**
+ * The policy the connector passes for a page open in a connected tab: that
+ * page's own origin may be loaded, nothing else local. The runner takes no
+ * policy of its own.
+ */
+const vouched = (url: string) => ({ allowedOrigins: [new URL(url).origin] });
+
 beforeAll(async () => {
   fixture = await startFixtureServer();
 
@@ -42,6 +50,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
     const report = await runLighthouseAudit({
       url: fixture.url,
       category: "accessibility",
+      egress: vouched(fixture.url),
     });
 
     expect(report.category).toBe("accessibility");
@@ -66,13 +75,21 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
   }, 180_000);
 
   it("finds the missing alt attribute on the fixture page", async () => {
-    const report = await runLighthouseAudit({ url: fixture.url, category: "accessibility" });
+    const report = await runLighthouseAudit({
+      url: fixture.url,
+      category: "accessibility",
+      egress: vouched(fixture.url),
+    });
     const ids = report.issues.map((issue) => issue.id);
     expect(ids).toContain("image-alt");
   }, 180_000);
 
   it("runs a performance audit and reports core web vitals", async () => {
-    const report = await runLighthouseAudit({ url: fixture.url, category: "performance" });
+    const report = await runLighthouseAudit({
+      url: fixture.url,
+      category: "performance",
+      egress: vouched(fixture.url),
+    });
 
     expect(report.category).toBe("performance");
     expect(report.metrics).toBeDefined();
@@ -84,19 +101,31 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
   }, 240_000);
 
   it("runs an SEO audit", async () => {
-    const report = await runLighthouseAudit({ url: fixture.url, category: "seo" });
+    const report = await runLighthouseAudit({
+      url: fixture.url,
+      category: "seo",
+      egress: vouched(fixture.url),
+    });
     expect(report.category).toBe("seo");
     expect(report.score).toBeTypeOf("number");
   }, 180_000);
 
   it("runs a best-practices audit", async () => {
-    const report = await runLighthouseAudit({ url: fixture.url, category: "best-practices" });
+    const report = await runLighthouseAudit({
+      url: fixture.url,
+      category: "best-practices",
+      egress: vouched(fixture.url),
+    });
     expect(report.category).toBe("best-practices");
     expect(report.score).toBeTypeOf("number");
   }, 180_000);
 
   it("keeps a real report small enough to hand to a model", async () => {
-    const report = await runLighthouseAudit({ url: fixture.url, category: "accessibility" });
+    const report = await runLighthouseAudit({
+      url: fixture.url,
+      category: "accessibility",
+      egress: vouched(fixture.url),
+    });
     // A raw Lighthouse result is megabytes; the whole point of the extractor is
     // that what reaches the agent is not.
     expect(JSON.stringify(report).length).toBeLessThan(150_000);
@@ -104,7 +133,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
 
   it("fails clearly on a URL that cannot be audited", async () => {
     await expect(
-      runLighthouseAudit({ url: "chrome://settings", category: "seo" })
+      runLighthouseAudit({ url: "chrome://settings", category: "seo", egress: {} })
     ).rejects.toThrow(AuditError);
 
     expect(() => assertAuditableUrl("not a url")).toThrow(AuditError);
@@ -122,7 +151,11 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
     const previous = process.env["CHROME_PATH"];
     process.env["CHROME_PATH"] = "/nonexistent/chrome-binary";
     try {
-      const report = await runLighthouseAudit({ url: fixture.url, category: "seo" });
+      const report = await runLighthouseAudit({
+        url: fixture.url,
+        category: "seo",
+        egress: vouched(fixture.url),
+      });
       expect(report.category).toBe("seo");
       expect(report.score).toBeTypeOf("number");
     } finally {
@@ -198,9 +231,9 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
     // request reached the proxy. A looser match would also accept Chrome
     // bypassing the proxy and failing to connect on its own.
     it("refuses a redirect into a blocked range", async () => {
-      await expect(runLighthouseAudit({ url: `${base}/redirect`, category: "seo" })).rejects.toThrow(
-        /tried to reach 192\.0\.2\.1/
-      );
+      await expect(
+        runLighthouseAudit({ url: `${base}/redirect`, category: "seo", egress: vouched(base) })
+      ).rejects.toThrow(/tried to reach .*192\.0\.2\.1/);
     }, 180_000);
 
     /**
@@ -213,8 +246,8 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
      */
     it("routes link-local requests through the proxy, where they are refused", async () => {
       await expect(
-        runLighthouseAudit({ url: `${base}/redirect-link-local`, category: "seo" })
-      ).rejects.toThrow(/tried to reach 169\.254\.1\.1/);
+        runLighthouseAudit({ url: `${base}/redirect-link-local`, category: "seo", egress: vouched(base) })
+      ).rejects.toThrow(/tried to reach .*169\.254\.1\.1/);
     }, 180_000);
 
     it("audits a dev server by its localhost name through the proxy", async () => {
@@ -223,6 +256,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
       const report = await runLighthouseAudit({
         url: `http://localhost:${fixture.port}/`,
         category: "seo",
+        egress: vouched(`http://localhost:${fixture.port}/`),
       });
       expect(report.score).toBeTypeOf("number");
       expect(report.metadata.url).toContain("localhost");
@@ -231,7 +265,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
     it("still audits a page whose frame was refused, without loading the frame", async () => {
       let lhr: any;
       const report = await runLighthouseAudit(
-        { url: `${base}/`, category: "best-practices" },
+        { url: `${base}/`, category: "best-practices", egress: vouched(base) },
         { onRawResult: (raw) => (lhr = raw) }
       );
       expect(report.score).toBeTypeOf("number");
@@ -248,9 +282,31 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
      */
     it("refuses a redirect from the audited local page to another local port", async () => {
       await expect(
-        runLighthouseAudit({ url: `${base}/redirect-local`, category: "seo" })
-      ).rejects.toThrow(/tried to reach 127\.0\.0\.1/);
+        runLighthouseAudit({ url: `${base}/redirect-local`, category: "seo", egress: vouched(base) })
+      ).rejects.toThrow(new RegExp(`tried to reach .*127\\.0\\.0\\.1:${otherPort}`));
       expect(otherHits).toEqual([]);
+    }, 180_000);
+
+    /**
+     * DNS rebinding between the connector's check and the runner's. The
+     * connector saw a public address and allowed nothing local; every lookup
+     * after that answers loopback. The runner must not decide on its own that
+     * the page is local and therefore trusted.
+     */
+    it("keeps the caller's policy when the audited name rebinds to loopback after the check", async () => {
+      const before = otherHits.length;
+      await expect(
+        runLighthouseAudit({
+          url: `http://rebind.test:${otherPort}/admin`,
+          category: "seo",
+          egress: {
+            allowPrivate: false,
+            allowedOrigins: [],
+            lookup: async (host) => (host === "rebind.test" ? ["127.0.0.1"] : systemLookup(host)),
+          },
+        })
+      ).rejects.toThrow(/tried to reach .*rebind\.test/);
+      expect(otherHits.length).toBe(before);
     }, 180_000);
 
     it("keeps WebRTC from sending UDP around the proxy", async () => {
@@ -262,6 +318,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
         const report = await runLighthouseAudit({
           url: `${base}/webrtc?port=${stun.address().port}`,
           category: "seo",
+          egress: vouched(base),
         });
         expect(report.score).toBeTypeOf("number");
         expect(packets).toEqual([]);
@@ -272,7 +329,7 @@ describe.skipIf(!browserSupport.usable)("lighthouse audits against a real page",
 
     it("refuses a metadata address before launching a browser", async () => {
       await expect(
-        runLighthouseAudit({ url: "http://169.254.169.254/latest/meta-data/", category: "seo" })
+        runLighthouseAudit({ url: "http://169.254.169.254/latest/meta-data/", category: "seo", egress: {} })
       ).rejects.toThrow(/link-local|metadata/);
     }, 30_000);
   });

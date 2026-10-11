@@ -157,6 +157,7 @@ describe("audit egress proxy", () => {
       expect((await viaProxy(proxy.port, "http://router.test/")).status).toBe(403);
       expect((await viaProxy(proxy.port, "http://192.168.1.1/")).status).toBe(403);
       expect(proxy.refused.map((r) => r.class)).toEqual(["loopback", "loopback", "private", "private"]);
+      expect(proxy.refused[0]).toEqual({ host: "127.0.0.1", port: otherPort, class: "loopback" });
     } finally {
       await proxy.close();
     }

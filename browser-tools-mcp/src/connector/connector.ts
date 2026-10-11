@@ -110,7 +110,7 @@ export interface ConnectorConfig {
   auditAllowPrivateNetwork?: boolean;
   /** Injectable so audits can be exercised without launching a browser. */
   auditRunner?: (
-    options: { url: string; category: AuditCategory; egress?: AuditOptions["egress"] },
+    options: { url: string; category: AuditCategory; egress: AuditOptions["egress"] },
     hooks?: AuditHooks
   ) => Promise<AuditReport>;
   /** Injectable DNS for tests of the audit destination policy. */
