@@ -115,7 +115,8 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   // One answer per host for the whole audit. A page asks for the same hosts
   // over and over, and a lookup per request would slow down the very loads a
   // performance audit is timing. It also keeps every request to a host on the
-  // addresses that were checked first.
+  // addresses that were checked first. A failed lookup is not kept: one DNS
+  // hiccup would otherwise refuse the host for the rest of the audit.
   const resolved = new Map<string, Promise<ResolvedDestination>>();
   const resolve = (host: string) => {
     const key = normalizeHost(host);
@@ -123,6 +124,9 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     if (!pending) {
       pending = resolveDestination(key, lookup);
       resolved.set(key, pending);
+      void pending.then((dest) => {
+        if (dest.addresses.length === 0) resolved.delete(key);
+      });
     }
     return pending;
   };
@@ -206,6 +210,12 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     upstream.on("error", () => {
       if (!res.headersSent) res.writeHead(502);
       res.end();
+    });
+    // Chrome cancels requests all the time (navigation, media seeking,
+    // prefetch). Stop the upstream transfer with it, rather than keep
+    // downloading into a closed response on a pooled connection.
+    res.on("close", () => {
+      if (!res.writableFinished) upstream.destroy();
     });
     req.pipe(upstream);
   });

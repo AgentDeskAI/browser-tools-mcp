@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
@@ -180,6 +180,61 @@ describe("audit egress proxy", () => {
       expect(asked).toEqual(["dev.test"]);
     } finally {
       await proxy.close();
+    }
+  });
+
+  it("does not hold on to a failed lookup for the rest of the audit", async () => {
+    let attempts = 0;
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      lookup: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("EAI_AGAIN");
+        return ["127.0.0.1"];
+      },
+    });
+    try {
+      // Fails closed on the hiccup itself...
+      expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(403);
+      // ...and asks again next time rather than refusing the host for good.
+      expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(200);
+      expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(200);
+      expect(attempts).toBe(2);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("stops the upstream transfer when the browser cancels the request", async () => {
+    let upstreamClosed = false;
+    const streaming = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      const timer = setInterval(() => res.write(Buffer.alloc(16_384)), 20);
+      req.socket.once("close", () => {
+        clearInterval(timer);
+        upstreamClosed = true;
+      });
+    });
+    await new Promise<void>((r) => streaming.listen(0, "127.0.0.1", () => r()));
+    const port = (streaming.address() as AddressInfo).port;
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port: proxy.port, method: "GET", path: `http://127.0.0.1:${port}/video` },
+          (res) => res.once("data", () => {
+            req.destroy();
+            resolve();
+          })
+        );
+        req.on("error", (error) => (error.message.includes("socket hang up") ? undefined : reject(error)));
+        req.end();
+      });
+      await vi.waitFor(() => expect(upstreamClosed).toBe(true), { timeout: 3_000 });
+    } finally {
+      await proxy.close();
+      streaming.closeAllConnections();
+      await new Promise<void>((r) => streaming.close(() => r()));
     }
   });
 
