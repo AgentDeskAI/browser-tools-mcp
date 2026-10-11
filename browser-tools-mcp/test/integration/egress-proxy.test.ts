@@ -156,7 +156,10 @@ describe("audit egress proxy", () => {
       expect(await connectVia(proxy.port, `localhost:${otherPort}`)).toMatch(/403/);
       expect((await viaProxy(proxy.port, "http://router.test/")).status).toBe(403);
       expect((await viaProxy(proxy.port, "http://192.168.1.1/")).status).toBe(403);
-      expect(proxy.refused.map((r) => r.class)).toEqual(["loopback", "loopback", "private", "private"]);
+      // NAT64 of 127.0.0.1 is classed loopback but would leave the machine
+      // for a translator: not the vouched port on this machine.
+      expect(await connectVia(proxy.port, `[64:ff9b::7f00:1]:${internalPort}`)).toMatch(/403/);
+      expect(proxy.refused.map((r) => r.class)).toEqual(["loopback", "loopback", "private", "private", "loopback"]);
       expect(proxy.refused[0]).toEqual({ host: "127.0.0.1", port: otherPort, class: "loopback" });
     } finally {
       await proxy.close();

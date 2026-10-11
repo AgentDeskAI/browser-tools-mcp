@@ -132,7 +132,13 @@ export function describeRefusals(
   refused: EgressProxy["refused"],
   lighthouseMessage: string | undefined
 ): string {
-  const labels = [...new Set(refused.map((r) => (r.class === "blocked" ? r.host : `${r.host}:${r.port}`)))];
+  const labels = [
+    ...new Set(
+      refused.map((r) =>
+        r.unresolved ? `${r.host} (does not resolve)` : r.class === "blocked" ? r.host : `${r.host}:${r.port}`
+      )
+    ),
+  ];
   const shown = labels.slice(0, 10).join(", ") + (labels.length > 10 ? ` and ${labels.length - 10} more` : "");
   return (
     `The audited page did not load. This audit tried to reach ${shown}, which audits are not allowed to load.` +
@@ -176,11 +182,17 @@ export async function runLighthouseAudit(
   const parsed = assertAuditableUrl(options.url);
   const url = parsed.toString();
 
+  // Fails fast, before a browser starts, saying which of the two it is.
   const top = await resolveDestination(parsed.hostname, options.egress.lookup);
+  if (top.unresolved) {
+    throw new AuditError(
+      `Cannot audit ${parsed.hostname}: the name does not resolve. Check the url, or try again if the ` +
+        `network was briefly down.`
+    );
+  }
   if (top.class === "blocked") {
     throw new AuditError(
-      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, metadata, reserved or ` +
-        `unresolvable address.`
+      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, metadata or reserved address.`
     );
   }
 

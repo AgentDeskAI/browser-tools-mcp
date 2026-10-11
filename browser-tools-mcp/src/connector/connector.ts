@@ -37,7 +37,7 @@ import {
   type AuditHooks,
   type AuditOptions,
 } from "../lighthouse/runner.js";
-import { destinationKeyOf, isLocalName, originOf, resolveDestination } from "../lighthouse/destination.js";
+import { isLocalName, originOf, resolveDestination, vouchKeyOf } from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -1081,17 +1081,14 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   }
 
   /**
-   * Whether one of these origins vouches for the url: the same scheme, and the
-   * same host and port as the egress proxy compares them, so every loopback
-   * spelling of this machine is one host. A tab on localhost:3000 vouches for
-   * an audit of 127.0.0.1:3000, as it already lets the page load it.
+   * Whether one of these origins vouches for the url, compared as the egress
+   * proxy compares them (`vouchKeyOf`): the spellings of localhost are one
+   * host, so a tab on localhost:3000 vouches for an audit of 127.0.0.1:3000,
+   * as it already lets the page load it.
    */
   function vouchesFor(origins: Set<string>, url: URL): boolean {
-    const key = `${url.protocol}${destinationKeyOf(url)}`;
-    for (const origin of origins) {
-      if (`${new URL(origin).protocol}${destinationKeyOf(origin)}` === key) return true;
-    }
-    return false;
+    const keys = new Set([...origins].map((origin) => vouchKeyOf(origin)));
+    return keys.has(vouchKeyOf(url));
   }
 
   /**
@@ -1126,10 +1123,16 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   ): Promise<{ allowPrivate: boolean; allowedOrigins: string[] }> {
     const parsed = assertAuditableUrl(url);
     const dest = await resolveDestination(parsed.hostname, config.auditLookup);
+    if (dest.unresolved) {
+      throw new AuditError(
+        `Cannot audit ${parsed.hostname}: the name does not resolve. Check the url, or try again if ` +
+          `the network was briefly down.`
+      );
+    }
     if (dest.class === "blocked") {
       throw new AuditError(
-        `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata, reserved ` +
-          `or unresolvable address.`
+        `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata or reserved ` +
+          `address.`
       );
     }
     if (config.auditAllowPrivateNetwork) return { allowPrivate: true, allowedOrigins: [] };

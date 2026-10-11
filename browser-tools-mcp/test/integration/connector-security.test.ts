@@ -262,8 +262,10 @@ describe("audit destination policy", () => {
     guarded = await createConnector({
       port: 0,
       screenshotDir: guardedDir,
-      auditLookup: async (host) =>
-        host === "intranet.test" ? ["10.0.0.7"] : host === "rebind.example.com" ? [rebindTo] : ["93.184.215.14"],
+      auditLookup: async (host) => {
+        if (host === "nxdomain.example.com") throw new Error("ENOTFOUND");
+        return host === "intranet.test" ? ["10.0.0.7"] : host === "rebind.example.com" ? [rebindTo] : ["93.184.215.14"];
+      },
       auditRunner: async ({ url, category, egress }) => {
         audited.push({
           url,
@@ -328,6 +330,15 @@ describe("audit destination policy", () => {
     expect(audited.length).toBe(before);
   });
 
+  it("says a name does not resolve, rather than calling it a metadata address", async () => {
+    const before = audited.length;
+    const res = await audit("https://nxdomain.example.com/");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/does not resolve/);
+    expect(res.body.error).not.toMatch(/metadata/);
+    expect(audited.length).toBe(before);
+  });
+
   it("audits public sites, without letting them reach private addresses", async () => {
     const res = await audit("https://example.com/");
     expect(res.status).toBe(200);
@@ -353,6 +364,11 @@ describe("audit destination policy", () => {
       // The same port under another loopback spelling is the same server.
       expect((await audit("http://127.0.0.1:3000/")).status).toBe(200);
       expect(audited.at(-1)!.allowedOrigins).toEqual(["http://localhost:3000", "http://127.0.0.1:3000"]);
+      // Another loopback bind address is another service.
+      expect((await audit("http://127.0.0.2:3000/")).status).toBe(422);
+      // An address that only embeds 127.0.0.1 (NAT64, 6to4) leaves the machine.
+      expect((await audit("http://[64:ff9b::7f00:1]:3000/")).status).toBe(422);
+      expect((await audit("http://[2002:7f00:1::]:3000/")).status).toBe(422);
     } finally {
       await ext.close();
     }

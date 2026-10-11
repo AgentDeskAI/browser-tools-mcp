@@ -221,6 +221,12 @@ export interface ResolvedDestination {
    */
   addresses: string[];
   class: AddressClass;
+  /**
+   * The name did not resolve: the lookup failed or answered nothing. The
+   * class is still "blocked" (lookups fail closed); this says why, so a
+   * refusal can say "could not resolve" rather than "metadata address".
+   */
+  unresolved?: true;
 }
 
 /**
@@ -246,44 +252,79 @@ export async function resolveDestination(
   try {
     addresses = await lookup(host);
   } catch {
-    return { host, addresses: [], class: "blocked" };
+    return { host, addresses: [], class: "blocked", unresolved: true };
   }
-  if (addresses.length === 0) return { host, addresses, class: "blocked" };
+  if (addresses.length === 0) return { host, addresses, class: "blocked", unresolved: true };
 
   return { host, addresses, class: worstClass(addresses.map(classifyAddress)) };
 }
 
 /**
+ * Whether a host is one of the spellings of what localhost means: a localhost
+ * name, 127.0.0.1, ::1, or 127.0.0.1 mapped into IPv6 (::ffff:127.0.0.1, which
+ * the kernel delivers to the IPv4 loopback). Chrome connects a localhost name
+ * to 127.0.0.1 or ::1, so a server reachable as one is reachable as the others.
+ *
+ * Narrower than the "loopback" class on purpose:
+ * - Other 127.x addresses are other bind addresses. A service on
+ *   127.0.0.2:8080 is not the one on 127.0.0.1:8080.
+ * - NAT64, 6to4 and IPv4-compatible addresses embedding 127.0.0.1 are classed
+ *   loopback so they are refused like it, but a connection to one leaves the
+ *   machine for a translator or relay.
+ */
+function isLocalhostSpelling(host: string): boolean {
+  if (isLocalhostName(host)) return true;
+  if (net.isIPv4(host)) return host === "127.0.0.1";
+  const groups = expandIPv6(host);
+  if (!groups) return false;
+  const loopbackV6 = groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1;
+  const mappedLocalhost =
+    groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff && groups[6] === 0x7f00 && groups[7] === 1;
+  return loopbackV6 || mappedLocalhost;
+}
+
+/**
  * How the egress proxy matches a loopback or private destination against the
  * origins an audit may load: host:port, scheme-blind because a CONNECT carries
- * none. Every spelling of this machine (localhost, *.localhost, 127.x, ::1) is
- * one host, so a page on localhost:3000 can still load 127.0.0.1:3000.
+ * none. The spellings of localhost (localhost, *.localhost, 127.0.0.1, ::1) are
+ * one host, so a page on localhost:3000 can still load 127.0.0.1:3000. Any
+ * other address is its own host (see `isLocalhostSpelling`).
  */
 export function destinationKey(rawHost: string, port: number | string): string {
   const host = normalizeHost(rawHost);
-  const thisMachine = isLocalhostName(host) || (net.isIP(host) !== 0 && classifyAddress(host) === "loopback");
-  return `${thisMachine ? "loopback" : host}:${port}`;
+  return `${isLocalhostSpelling(host) ? "localhost" : host}:${port}`;
 }
 
-/** destinationKey for an origin or url; null for anything that is not http(s). */
-export function destinationKeyOf(url: string | URL): string | null {
-  try {
-    const parsed = typeof url === "string" ? new URL(url) : url;
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return destinationKey(parsed.hostname, parsed.port || (parsed.protocol === "https:" ? "443" : "80"));
-  } catch {
-    return null;
-  }
-}
-
-/** The scheme://host:port an origin check compares, with default ports made explicit. */
-export function originOf(url: string | URL): string | null {
+/** Scheme, host and port of an http(s) url, the default port made explicit; null for anything else. */
+function httpEndpoint(url: string | URL): { protocol: string; hostname: string; port: string } | null {
   try {
     const parsed = typeof url === "string" ? new URL(url) : url;
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
     const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
-    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}:${port}`;
+    return { protocol: parsed.protocol, hostname: parsed.hostname.toLowerCase(), port };
   } catch {
     return null;
   }
+}
+
+/** destinationKey for an origin or url; null for anything that is not http(s). */
+export function destinationKeyOf(url: string | URL): string | null {
+  const endpoint = httpEndpoint(url);
+  return endpoint ? destinationKey(endpoint.hostname, endpoint.port) : null;
+}
+
+/**
+ * What a vouch is compared by: the scheme plus `destinationKey`, so the
+ * connector deciding whether a page may be audited and the proxy deciding
+ * what it may load agree on what counts as the same place.
+ */
+export function vouchKeyOf(url: string | URL): string | null {
+  const endpoint = httpEndpoint(url);
+  return endpoint ? `${endpoint.protocol}//${destinationKey(endpoint.hostname, endpoint.port)}` : null;
+}
+
+/** The scheme://host:port an origin check compares, with default ports made explicit. */
+export function originOf(url: string | URL): string | null {
+  const endpoint = httpEndpoint(url);
+  return endpoint ? `${endpoint.protocol}//${endpoint.hostname}:${endpoint.port}` : null;
 }

@@ -15,13 +15,14 @@ describe("describeRefusals", () => {
         { host: "127.0.0.1", port: 8500, class: "loopback" },
         { host: "127.0.0.1", port: 8500, class: "loopback" },
         { host: "192.0.2.1", port: 80, class: "blocked" },
+        { host: "gone.example", port: 443, class: "blocked", unresolved: true },
       ],
       "Lighthouse was unable to reliably load the page you requested. (Status code: 403)"
     );
     expect(message).toBe(
       "The audited page did not load. This audit tried to reach clients2.google.com, 127.0.0.1:8500, " +
-        "192.0.2.1, which audits are not allowed to load. (Lighthouse: Lighthouse was unable to " +
-        "reliably load the page you requested. (Status code: 403))"
+        "192.0.2.1, gone.example (does not resolve), which audits are not allowed to load. " +
+        "(Lighthouse: Lighthouse was unable to reliably load the page you requested. (Status code: 403))"
     );
   });
 

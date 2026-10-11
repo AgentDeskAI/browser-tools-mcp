@@ -35,8 +35,8 @@ back as its `final-screenshot`.
   Lookups fail closed. WebRTC is kept off direct UDP, so it cannot go around
   the proxy either.
 - **A local page reaches only the local origins vouched for.** Auditing
-  `http://localhost:3000` lets that page load `localhost:3000` (under any
-  loopback spelling) and the other origins open in a tab or allowlisted, not
+  `http://localhost:3000` lets that page load `localhost:3000` (also spelled
+  `127.0.0.1` or `[::1]`) and the other origins open in a tab or allowlisted, not
   every loopback and private address, so a dev server's open redirect cannot
   carry the audit to another service. A page whose API runs on another local
   port loads it once that port is open in a tab or passed to

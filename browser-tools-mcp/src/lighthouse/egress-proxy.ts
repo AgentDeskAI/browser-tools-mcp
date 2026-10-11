@@ -52,7 +52,7 @@ export interface EgressPolicy {
 export interface EgressProxy {
   port: number;
   /** Requests refused, once per destination, for diagnostics and tests. */
-  refused: Array<{ host: string; port: number; class: AddressClass }>;
+  refused: Array<{ host: string; port: number; class: AddressClass; unresolved?: true }>;
   close(): Promise<void>;
 }
 
@@ -146,7 +146,12 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       const label = dest.class === "blocked" ? dest.host : `${dest.host}:${port}`;
       if (!warned.has(label) && warned.size < MAX_REPORTED_REFUSALS) {
         warned.add(label);
-        refused.push({ host: dest.host, port, class: dest.class });
+        refused.push({
+          host: dest.host,
+          port,
+          class: dest.class,
+          ...(dest.unresolved ? { unresolved: true as const } : {}),
+        });
         log.warn(`Audit browser blocked from ${label} (${dest.class} address)`);
       }
       return null;

@@ -7,6 +7,7 @@ import {
   isLocalName,
   destinationKey,
   destinationKeyOf,
+  vouchKeyOf,
 } from "../../src/lighthouse/destination";
 
 /**
@@ -76,7 +77,13 @@ describe("resolveDestination", () => {
       throw new Error("ENOTFOUND");
     });
     expect(dest.class).toBe("blocked");
-    expect((await resolveDestination("empty.test", async () => [])).class).toBe("blocked");
+    expect(dest.unresolved).toBe(true);
+    const empty = await resolveDestination("empty.test", async () => []);
+    expect(empty.class).toBe("blocked");
+    expect(empty.unresolved).toBe(true);
+    // A blocked address or name is blocked for what it is, not for failing to resolve.
+    expect((await resolveDestination("metadata.google.internal", async () => [])).unresolved).toBeUndefined();
+    expect((await resolveDestination("imds.test", async () => ["169.254.169.254"])).unresolved).toBeUndefined();
   });
 
   it("treats localhost and *.localhost as loopback without consulting DNS, as Chrome does", async () => {
@@ -155,22 +162,43 @@ describe("isLocalName", () => {
 });
 
 describe("destinationKey", () => {
-  it("treats every spelling of this machine as one host, port by port", () => {
-    for (const host of ["localhost", "app.localhost", "127.0.0.1", "127.0.0.2", "::1", "[::1]", "::ffff:127.0.0.1"]) {
-      expect(destinationKey(host, 3000), host).toBe("loopback:3000");
+  it("treats the spellings of localhost as one host, port by port", () => {
+    const spellings = ["localhost", "app.localhost", "127.0.0.1", "::1", "[::1]", "::ffff:127.0.0.1", "::ffff:7f00:1"];
+    for (const host of spellings) expect(destinationKey(host, 3000), host).toBe("localhost:3000");
+    expect(destinationKey("0:0:0:0:0:0:0:1", 3000)).toBe("localhost:3000");
+    expect(destinationKey("localhost", 3001)).toBe("localhost:3001");
+  });
+
+  it("keeps other loopback addresses apart from localhost", () => {
+    // Another bind address: a service on 127.0.0.2:8080 is not the one on 127.0.0.1:8080.
+    expect(destinationKey("127.0.0.2", 8080)).toBe("127.0.0.2:8080");
+    expect(destinationKey("::ffff:127.0.0.2", 8080)).not.toBe("localhost:8080");
+    // Classed loopback, so refused like it, but a connection to these leaves
+    // the machine for a NAT64 translator, a 6to4 relay or nowhere: a vouch for
+    // localhost:3000 must not cover them.
+    const embedded = ["64:ff9b::7f00:1", "64:ff9b:1::7f00:1", "2002:7f00:1::", "::7f00:1", "[64:ff9b::7f00:1]"];
+    for (const host of embedded) {
+      expect(classifyAddress(host), host).toBe("loopback");
+      expect(destinationKey(host, 3000), host).not.toBe("localhost:3000");
     }
-    expect(destinationKey("localhost", 3001)).toBe("loopback:3001");
     expect(destinationKey("192.168.1.10", 80)).toBe("192.168.1.10:80");
     // A public name that resolves to loopback is still its own name.
     expect(destinationKey("lvh.me", 3000)).toBe("lvh.me:3000");
   });
 
   it("derives keys from origins with default ports made explicit", () => {
-    expect(destinationKeyOf("http://localhost:3000")).toBe("loopback:3000");
-    expect(destinationKeyOf("http://127.0.0.1/")).toBe("loopback:80");
+    expect(destinationKeyOf("http://localhost:3000")).toBe("localhost:3000");
+    expect(destinationKeyOf("http://127.0.0.1/")).toBe("localhost:80");
     expect(destinationKeyOf("https://router.lan")).toBe("router.lan:443");
     expect(destinationKeyOf("chrome://settings")).toBeNull();
     expect(destinationKeyOf("not a url")).toBeNull();
+  });
+
+  it("compares vouches by scheme as well", () => {
+    expect(vouchKeyOf("http://127.0.0.1:3000/x")).toBe(vouchKeyOf("http://localhost:3000"));
+    expect(vouchKeyOf("https://localhost:3000")).not.toBe(vouchKeyOf("http://localhost:3000"));
+    expect(vouchKeyOf("http://127.0.0.2:3000")).not.toBe(vouchKeyOf("http://localhost:3000"));
+    expect(vouchKeyOf("ftp://localhost/")).toBeNull();
   });
 });
 
