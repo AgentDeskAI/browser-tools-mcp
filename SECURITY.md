@@ -115,7 +115,11 @@ be, both are worth reporting.
   reaches a loopback or private origin only when the user has it open in a
   connected tab under a local name, or has allowlisted it. Every request it
   makes goes through a checking proxy that connects to the address it vetted,
-  and WebRTC is kept off direct UDP.
+  and WebRTC is kept off direct UDP. One known limit: with a fake-IP proxy
+  (Clash, sing-box or Surge in fake-ip mode), every name resolves to
+  198.18.0.0/15 and that proxy picks the real address later, so the check
+  cannot see where a name really goes. On such a machine, keep audits off
+  hosts with a cloud metadata service, or exclude the audit tools.
 
 These are covered by regression tests in
 `browser-tools-mcp/test/integration/connector-security.test.ts`, which assert
