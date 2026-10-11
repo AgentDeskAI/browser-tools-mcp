@@ -113,7 +113,21 @@ async function probe(baseUrl: string, timeoutMs = 400): Promise<boolean> {
  * second process was the single largest source of support load in 1.x.
  */
 export async function createRuntime(options: CliOptions): Promise<Runtime> {
+  // Audit policy belongs to the connector, so attaching leaves it as the
+  // process that started the connector set it. Fails closed, but say so: the
+  // refusal message tells the user to pass the very flag they passed.
+  const warnAuditFlagsIgnored = (where: string) => {
+    if (options.auditAllowedOrigins?.length || options.auditAllowPrivateNetwork) {
+      log.warn(
+        `--audit-allow-origin and --audit-allow-private-network are ignored: this process is ` +
+          `attaching to ${where}, which uses the audit settings it was started with. Pass them ` +
+          `to the process that starts the connector.`
+      );
+    }
+  };
+
   if (options.connectUrl) {
+    warnAuditFlagsIgnored(`the connector at ${options.connectUrl}`);
     const token = options.token ?? readSessionFile()?.token ?? "";
     if (!token) {
       throw new Error("--connect requires --token (or a readable session file)");
@@ -131,6 +145,7 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
   const existing = readSessionFile();
   if (existing && (await probe(`http://127.0.0.1:${existing.port}`))) {
     log.info(`Attaching to the connector already running on port ${existing.port}`);
+    warnAuditFlagsIgnored(`the connector already running on port ${existing.port}`);
     return {
       client: new HttpConnectorClient({
         baseUrl: `http://127.0.0.1:${existing.port}`,

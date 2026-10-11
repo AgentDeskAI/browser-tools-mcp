@@ -223,6 +223,20 @@ describe("runtime attach behaviour", () => {
     expect(connector.hasExtension()).toBe(true);
   });
 
+  it("says so when audit flags cannot apply because it attached", async () => {
+    publishSession();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const runtime = await createRuntime({ ...baseOptions, auditAllowedOrigins: ["http://localhost:4000"] });
+      expect(runtime.connector).toBeNull();
+      await runtime.close();
+      const written = stderr.mock.calls.map((call) => String(call[0])).join("");
+      expect(written).toMatch(/WARN .*--audit-allow-origin and --audit-allow-private-network are ignored/);
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("starts its own connector when the session file points at a dead port", async () => {
     writeSessionFile({
       port: 1,
