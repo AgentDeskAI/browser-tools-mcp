@@ -53,7 +53,43 @@ export interface EgressProxy {
   port: number;
   /** Requests refused, once per destination, for diagnostics and tests. */
   refused: Array<{ host: string; port: number; class: AddressClass; unresolved?: true }>;
+  /**
+   * Refuses this port on localhost from now on, whatever the policy: for the
+   * audit browser's own DevTools port, known only once it has started. The
+   * proxy's own port is refused from the start.
+   */
+  refusePort(port: number): void;
   close(): Promise<void>;
+}
+
+/** Headers that belong to one connection, not the request (RFC 9110 section 7.6.1). */
+const HOP_BY_HOP = [
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
+
+/**
+ * Headers to pass on to the next hop: everything except the hop-by-hop ones
+ * and any the Connection header names. Passing them on lets one side's
+ * connection handling (Connection: close, Keep-Alive, an Upgrade) leak onto
+ * the other connection, which upsets keep-alive and the timings an audit
+ * measures, or gets a 101 back that the proxy cannot relay.
+ */
+function forwardable(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+  const named = String(headers["connection"] ?? "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean);
+  const out: http.OutgoingHttpHeaders = { ...headers };
+  for (const name of [...HOP_BY_HOP, ...named]) delete out[name];
+  return out;
 }
 
 /** Refusals recorded and logged per audit; a hostile page can invent hostnames without end. */
@@ -131,10 +167,17 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     return pending;
   };
 
+  // The audit's own machinery on localhost: never reachable, even with
+  // allowPrivate (--audit-allow-private-network), which otherwise lets a
+  // page reach any local port.
+  const refusedLocal = new Set<string>();
+
   function permitted(dest: ResolvedDestination, port: number): boolean {
     if (dest.class === "blocked") return false;
     if (dest.class === "public") return true;
-    return policy.allowPrivate || allowedLocal.has(destinationKey(dest.host, port));
+    const key = destinationKey(dest.host, port);
+    if (refusedLocal.has(key)) return false;
+    return policy.allowPrivate || allowedLocal.has(key);
   }
 
   /** Resolves, classifies and returns the vetted addresses to connect to, or null. */
@@ -193,9 +236,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       res.writeHead(403, { "content-type": "text/plain" }).end("Blocked by browser-tools-mcp audit policy");
       return;
     }
-    const headers = { ...req.headers };
-    delete headers["proxy-connection"];
-    delete headers["proxy-authorization"];
+    const headers = forwardable(req.headers);
     const upstream = http.request(
       {
         agent,
@@ -208,7 +249,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
         setHost: false,
       } as http.RequestOptions,
       (upstreamRes) => {
-        res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+        res.writeHead(upstreamRes.statusCode ?? 502, forwardable(upstreamRes.headers));
         upstreamRes.pipe(res);
       }
     );
@@ -269,10 +310,14 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const port = (server.address() as net.AddressInfo).port;
+  refusedLocal.add(destinationKey("localhost", port));
 
   return {
     port,
     refused,
+    refusePort: (local: number) => {
+      refusedLocal.add(destinationKey("localhost", local));
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());

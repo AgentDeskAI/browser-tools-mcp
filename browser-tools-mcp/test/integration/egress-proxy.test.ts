@@ -186,6 +186,88 @@ describe("audit egress proxy", () => {
     }
   });
 
+  /**
+   * --audit-allow-private-network lets a page reach any local port, but the
+   * audit's own machinery is not a page: the audit browser's DevTools port
+   * and the proxy itself stay out of reach.
+   */
+  it("keeps its own port and the audit browser's DevTools port refused, even with private access", async () => {
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    try {
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${proxy.port}/`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `localhost:${proxy.port}`)).toMatch(/403/);
+
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/json/version`)).status).toBe(200);
+      proxy.refusePort(internalPort);
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/json/version`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `[::1]:${internalPort}`)).toMatch(/403/);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  /**
+   * Hop-by-hop headers belong to one connection (RFC 9110 section 7.6.1).
+   * Passed through, Chrome's Upgrade or the upstream's Connection: close
+   * would act on the wrong connection.
+   */
+  it("does not pass hop-by-hop headers through in either direction", async () => {
+    let received: http.IncomingHttpHeaders = {};
+    const echo = http.createServer((req, res) => {
+      received = req.headers;
+      res.writeHead(200, {
+        "content-type": "text/plain",
+        connection: "keep-alive, x-upstream-hop",
+        "keep-alive": "timeout=1",
+        "x-upstream-hop": "1",
+        "x-upstream-end": "1",
+      });
+      res.end("ok");
+    });
+    await new Promise<void>((r) => echo.listen(0, "127.0.0.1", () => r()));
+    const port = (echo.address() as AddressInfo).port;
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    try {
+      const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const req = http.request({
+          host: "127.0.0.1",
+          port: proxy.port,
+          method: "GET",
+          path: `http://127.0.0.1:${port}/`,
+          headers: {
+            connection: "keep-alive, x-client-hop",
+            "keep-alive": "timeout=5",
+            upgrade: "h2c",
+            te: "trailers",
+            "proxy-connection": "keep-alive",
+            "x-client-hop": "1",
+            "x-client-end": "1",
+          },
+        });
+        req.on("response", (res) => {
+          res.resume();
+          resolve(res);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+      expect(response.statusCode).toBe(200);
+      for (const name of ["keep-alive", "upgrade", "te", "proxy-connection", "x-client-hop"]) {
+        expect(received[name], `upstream got ${name}`).toBeUndefined();
+      }
+      expect(received["x-client-end"]).toBe("1");
+      // The proxy's own server sets Keep-Alive for its own connection; the
+      // upstream's timeout=1 must not be what Chrome sees.
+      expect(response.headers["keep-alive"]).not.toBe("timeout=1");
+      expect(response.headers["x-upstream-hop"]).toBeUndefined();
+      expect(response.headers["x-upstream-end"]).toBe("1");
+    } finally {
+      await proxy.close();
+      echo.closeAllConnections();
+      await new Promise<void>((r) => echo.close(() => r()));
+    }
+  });
+
   it("does not hold on to a failed lookup for the rest of the audit", async () => {
     let attempts = 0;
     const proxy = await startEgressProxy({

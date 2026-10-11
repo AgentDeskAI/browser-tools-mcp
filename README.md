@@ -206,7 +206,7 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | `--token <t>` | Auth token to use with `--connect` |
 | `--no-redact` | Disable credential scrubbing (not recommended) |
 | `--audit-allow-origin <o,o>` | Loopback/private origins audits may target or load without an open tab |
-| `--audit-allow-private-network` | Let audits reach any loopback/private address (not recommended) |
+| `--audit-allow-private-network` | Let audits reach any loopback/private address except the audit's own ports (not recommended) |
 
 To share one browser session between several MCP clients, start the connector
 once with `npx @agentdeskai/browser-tools-server` and every client will attach to

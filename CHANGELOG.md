@@ -45,7 +45,8 @@ back as its `final-screenshot`.
   (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
   are not open in a tab. Even with private access allowed, link-local and
-  metadata addresses stay blocked. They apply to the process that starts the
+  metadata addresses stay blocked, and so do the audit browser's own DevTools
+  port and the checking proxy's port. They apply to the process that starts the
   connector (`browser-tools-connector --help` lists them); one that attaches
   to a running connector warns that they are ignored.
 - URLs with embedded credentials are rejected.

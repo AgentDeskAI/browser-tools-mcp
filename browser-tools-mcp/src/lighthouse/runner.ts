@@ -226,6 +226,9 @@ export async function runLighthouseAudit(
       chromePath: browser.path,
       prefs: AUDIT_BROWSER_PREFS,
     })) as unknown as { port: number; kill: () => Promise<void> };
+    // The audit browser's own DevTools port is the audit's machinery, not a
+    // page, whatever the policy allows.
+    proxy.refusePort(chrome.port);
 
     const flags = await buildLighthouseFlags({ category, device, port: chrome.port, timeoutMs });
 
