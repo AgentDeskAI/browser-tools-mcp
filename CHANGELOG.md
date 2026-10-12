@@ -72,7 +72,9 @@ The session file written by the embedded connector reported version 2.0.0
 regardless of the installed version; it now reports the real one. An audit
 requested with a `tabId` could audit another tab: through a shared connector
 the `tabId` was dropped, and a tab that had not reported its page yet fell back
-to the current one. It now audits the named tab, or says it cannot yet.
+to the current one. It now audits the named tab, or says it cannot yet. An
+audit with no `tabId` took the page of whichever tab last reported while
+current, even after another tab was selected; it now audits the current tab.
 
 Thanks to @beardthelion for reporting.
 

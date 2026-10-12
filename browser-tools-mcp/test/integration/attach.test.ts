@@ -220,6 +220,40 @@ describe("HttpConnectorClient against a live connector", () => {
     }
   });
 
+  it("audits the current tab's own page when no tab is named", async () => {
+    // The store's current page follows page reports, not tab selection, so
+    // an audit with no tabId used to take whichever tab last reported while
+    // current, which may no longer be the current one.
+    const first = new FakeExtension({ port: connector.port, tabId: 1 });
+    const second = new FakeExtension({ port: connector.port, tabId: 2 });
+    const quiet = new FakeExtension({ port: connector.port, tabId: 3 });
+    try {
+      for (const [ext, tabId, url] of [
+        [first, 1, "https://one.example/"],
+        [second, 2, "https://two.example/"],
+      ] as const) {
+        await ext.connect();
+        await ext.waitForWelcome();
+        ext.send({ type: "page", url, tabId });
+        await vi.waitFor(() => expect(connector.listTabs().find((t) => t.tabId === tabId)?.url).toBe(url));
+      }
+      const client = makeClient();
+      expect(connector.getCurrentTabId()).toBe(2);
+      expect((await client.audit("seo", {})).metadata.url).toBe("https://two.example/");
+
+      connector.setCurrentTab(1);
+      expect((await client.audit("seo", {})).metadata.url).toBe("https://one.example/");
+
+      // A newly opened tab becomes current before it has said where it is.
+      await quiet.connect();
+      await quiet.waitForWelcome();
+      await vi.waitFor(() => expect(connector.getCurrentTabId()).toBe(3));
+      await expect(client.audit("seo", {})).rejects.toThrow(/Tab 3 has not reported its page/);
+    } finally {
+      await Promise.all([first.close(), second.close(), quiet.close()]);
+    }
+  });
+
   it("surfaces connector errors as thrown errors, not silent empties", async () => {
     const client = makeClient();
     // No extension connected, so a screenshot cannot succeed.

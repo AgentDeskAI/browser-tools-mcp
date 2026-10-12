@@ -504,10 +504,13 @@ describe("audit destination policy", () => {
       await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(200));
       expect((await audit("http://localhost:7200/")).status).toBe(422);
 
-      // Moving on to a page it reports without a url (chrome://, a failed
-      // load) ends the vouch as surely as moving to another url.
+      // A page reported without a url ends the vouch as surely as another url.
       legacy.send(JSON.stringify({ type: "page", url: "" }));
       await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(422));
+
+      // Back on the page, so that closing the socket is what ends the vouch.
+      legacy.send(JSON.stringify({ type: "page", url: "http://localhost:7100/" }));
+      await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(200));
     } finally {
       await new Promise<void>((resolve) => {
         legacy.once("close", () => resolve());
@@ -515,6 +518,18 @@ describe("audit destination policy", () => {
       });
     }
     await vi.waitFor(async () => expect((await audit("http://localhost:7100/")).status).toBe(422));
+  });
+
+  it("ends a tab's vouch when it reports a page without a url", async () => {
+    const ext = await openTab(10, "http://localhost:7300/");
+    try {
+      expect((await audit("http://localhost:7300/")).status).toBe(200);
+      ext.send({ type: "page", url: "", tabId: 10 });
+      await vi.waitFor(async () => expect((await audit("http://localhost:7300/")).status).toBe(422));
+      expect(guarded.listTabs().find((t) => t.tabId === 10)?.url).toBe("");
+    } finally {
+      await ext.close();
+    }
   });
 
   it("refuses a url with embedded credentials before deciding anything else", async () => {

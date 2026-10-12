@@ -862,7 +862,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "page": {
         const url = typeof message["url"] === "string" ? (message["url"] as string) : "";
         const record = connection.tabId !== null ? tabs.get(String(connection.tabId)) : undefined;
-        if (record && url) {
+        // A report without a url replaces the old page too, rather than
+        // leaving it vouched for (see `openOrigins`) after the tab has left.
+        if (record) {
           record.url = url;
           record.lastActivityAt = Date.now();
         }
@@ -872,8 +874,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           store.setCurrentPage({ url, tabId: connection.tabId });
         } else if (!record) {
           store.setCurrentPage({ url, tabId: message["tabId"] });
-          // An empty url (chrome://, a failed load) replaces the old page too:
-          // the socket is no longer on it.
           if (connection.tabId === null) connection.pageUrl = url || undefined;
         }
         break;
@@ -1014,16 +1014,21 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     category: AuditCategory,
     options: { url?: string; tabId?: TabId } = {}
   ): Promise<AuditReport> {
-    const named = options.tabId !== undefined ? resolveTabId(options.tabId) : null;
-    const namedUrl = named !== null ? tabs.get(String(named))?.url : undefined;
-    // A named tab that has not reported its page yet must not quietly become
-    // whatever page the store saw last, which may be another tab's.
-    if (named !== null && !namedUrl && !options.url) {
-      throw new AuditError(
-        `Tab ${named} has not reported its page yet. Wait for it to load, or pass a url explicitly.`
-      );
+    // The named tab's page, else the current tab's: that tab's own, never
+    // whatever page the store saw last, which follows page reports rather
+    // than tab selection and may be another tab's. The store's page is only
+    // for an extension that never names its tab.
+    const tabId = resolveTabId(options.tabId);
+    let url = options.url;
+    if (!url && tabId !== null) {
+      url = tabs.get(String(tabId))?.url;
+      if (!url) {
+        throw new AuditError(
+          `Tab ${tabId} has not reported its page yet. Wait for it to load, or pass a url explicitly.`
+        );
+      }
     }
-    const url = options.url || namedUrl || store.getCurrentPage().url;
+    url ||= store.getCurrentPage().url;
     if (!url) {
       throw new AuditError(
         "No page URL is known yet. Open the page in Chrome with DevTools open, or pass a url explicitly."
