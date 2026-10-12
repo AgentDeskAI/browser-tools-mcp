@@ -1064,8 +1064,18 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       },
     };
 
+    // The connector's own port is the audit's machinery too: its identity
+    // route needs no token, and nothing a page loads has business there.
     const report = await runner(
-      { url, category, egress: { ...egress, ...(config.auditLookup ? { lookup: config.auditLookup } : {}) } },
+      {
+        url,
+        category,
+        egress: {
+          ...egress,
+          refusePorts: [actualPortHolder.value],
+          ...(config.auditLookup ? { lookup: config.auditLookup } : {}),
+        },
+      },
       hooks
     );
     return reportId ? { ...report, reportId } : report;

@@ -682,7 +682,7 @@ describe("audit destination policy", () => {
         ...flags,
         auditLookup: async () => ["198.18.0.5"],
         auditRunner: async ({ url, category, egress }) => {
-          ran.push(`${url} allowPrivate=${egress.allowPrivate}`);
+          ran.push(`${url} allowPrivate=${egress.allowPrivate} refusePorts=${egress.refusePorts?.join(",")}`);
           return { category, score: 100, metadata: { url }, summary: {}, issues: [] } as any;
         },
       });
@@ -706,7 +706,8 @@ describe("audit destination policy", () => {
     const open = await start({ auditAllowPrivateNetwork: true }, opened);
     try {
       expect((await post(open, "https://fake.example.com/")).status).toBe(200);
-      expect(opened).toEqual(["https://fake.example.com/ allowPrivate=true"]);
+      // The connector's own port goes along as audit machinery to refuse.
+      expect(opened).toEqual([`https://fake.example.com/ allowPrivate=true refusePorts=${open.port}`]);
     } finally {
       await open.close();
     }

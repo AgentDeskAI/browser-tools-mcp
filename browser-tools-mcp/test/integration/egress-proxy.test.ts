@@ -150,6 +150,28 @@ describe("audit egress proxy", () => {
     }
   });
 
+  /**
+   * The connector's own port is the audit's machinery as much as the proxy's
+   * and DevTools ports are: its identity route needs no token, and a page has
+   * no business probing it. The connector passes it in; it is refused from
+   * the start, however private access is set and whatever name reaches it.
+   */
+  it("refuses the ports it is told to from the start, under any name, whatever the policy", async () => {
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      refusePorts: [internalPort],
+      lookup: async () => ["127.0.0.1"],
+    });
+    try {
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/.identity`)).status).toBe(403);
+      expect((await viaProxy(proxy.port, `http://connector.lvh.me:${internalPort}/`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `localhost:${internalPort}`)).toMatch(/403/);
+      expect(proxy.refused.map((r) => r.class)).toEqual(["loopback", "loopback", "loopback"]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("connects to the address it vetted rather than resolving again", async () => {
     const proxy = await startEgressProxy({ allowPrivate: true, lookup: async () => ["127.0.0.1"] });
     try {

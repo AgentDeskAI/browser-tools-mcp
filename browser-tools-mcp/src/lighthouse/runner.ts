@@ -30,7 +30,13 @@ export interface AuditOptions {
    * answer "public" to the connector, which then allows nothing local, and
    * "loopback" a moment later to the runner.
    */
-  egress: { allowPrivate?: boolean; allowedOrigins?: string[]; lookup?: Lookup };
+  egress: {
+    allowPrivate?: boolean;
+    allowedOrigins?: string[];
+    /** Local ports never reached whatever the policy: the connector's own, besides the audit's. */
+    refusePorts?: number[];
+    lookup?: Lookup;
+  };
 }
 
 export class AuditError extends Error {
@@ -216,6 +222,7 @@ export async function runLighthouseAudit(
     proxy = await startEgressProxy({
       allowPrivate: options.egress.allowPrivate ?? false,
       allowedOrigins: options.egress.allowedOrigins ?? [],
+      refusePorts: options.egress.refusePorts ?? [],
       ...(options.egress.lookup ? { lookup: options.egress.lookup } : {}),
     });
 

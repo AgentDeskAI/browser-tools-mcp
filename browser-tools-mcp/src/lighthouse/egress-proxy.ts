@@ -46,6 +46,12 @@ export interface EgressPolicy {
    * host:port (see `destinationKeysOf`).
    */
   allowedOrigins?: string[];
+  /**
+   * Ports on this machine refused from the start whatever the policy, like
+   * the proxy's own: the connector's, whose token-less identity route and
+   * API a page must not get to probe. See `refusePort` for ports known later.
+   */
+  refusePorts?: number[];
   /** Injectable for tests. */
   lookup?: Lookup;
   /** How long one connection attempt to one address may take. */
@@ -110,8 +116,8 @@ function forwardable(headers: http.IncomingHttpHeaders, keep: string[] = []): ht
 
 /**
  * The ports of every running audit's own machinery on this machine: each
- * proxy's port and each audit browser's DevTools port, counted per proxy that
- * holds them. Shared by all proxies because audits can overlap (parallel tool
+ * proxy's port, each audit browser's DevTools port and the connector's own,
+ * counted per proxy that holds them. Shared by all proxies because audits can overlap (parallel tool
  * calls, two MCP clients on one connector), and a page in one audit must not
  * reach another audit's DevTools endpoint any more than its own.
  */
@@ -383,6 +389,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   });
   const port = (server.address() as net.AddressInfo).port;
   hold(port);
+  for (const local of policy.refusePorts ?? []) hold(local);
 
   return {
     port,
