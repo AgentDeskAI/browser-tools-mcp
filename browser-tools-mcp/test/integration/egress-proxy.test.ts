@@ -124,6 +124,30 @@ describe("audit egress proxy", () => {
     }
   });
 
+  /**
+   * Behind a fake-ip proxy every name resolves to 198.18.0.0/15 and the real
+   * destination is chosen later, by that proxy's rules. Such an answer says
+   * nothing about where a request goes, so no vouched origin can open it:
+   * only allowPrivate, which gives up on local reach altogether. Nothing is
+   * dialled here: the refusal comes before any connection attempt.
+   */
+  it("refuses a fake-ip answer however the name is vouched for, unless the private network is allowed", async () => {
+    const proxy = await startEgressProxy({
+      allowPrivate: false,
+      allowedOrigins: ["http://site.example", "https://site.example"],
+      lookup: async () => ["198.18.0.5"],
+    });
+    try {
+      expect((await viaProxy(proxy.port, "http://site.example/")).status).toBe(403);
+      expect(await connectVia(proxy.port, "site.example:443")).toMatch(/403/);
+      expect((await viaProxy(proxy.port, "http://198.18.0.5/")).status).toBe(403);
+      expect(proxy.refused.map((r) => r.class)).toEqual(["fake-ip", "fake-ip", "fake-ip"]);
+      expect(proxy.refused[0]).toEqual({ host: "site.example", port: 80, class: "fake-ip" });
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("connects to the address it vetted rather than resolving again", async () => {
     const proxy = await startEgressProxy({ allowPrivate: true, lookup: async () => ["127.0.0.1"] });
     try {

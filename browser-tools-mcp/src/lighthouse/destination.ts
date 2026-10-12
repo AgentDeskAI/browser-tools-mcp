@@ -11,13 +11,17 @@ import os from "node:os";
  * then read the result back through the stored Lighthouse report — which
  * carries a screenshot of the rendered page. See GHSA-fm7v-38h4-4q7w / CWE-918.
  *
- * Every address is put in one of four classes:
+ * Every address is put in one of five classes:
  *
  * - "blocked"  never reachable: link-local (cloud metadata lives here),
  *              unspecified, multicast, reserved and documentation ranges,
  *              known metadata addresses and names.
  * - "loopback" this machine: 127.0.0.0/8, ::1, and every address on its
  *              network interfaces.
+ * - "fake-ip"  198.18.0.0/15, the benchmarking range that "fake-ip" proxies
+ *              (Clash, mihomo, sing-box, Surge) answer every DNS query from,
+ *              choosing the real destination later: the address says nothing
+ *              about where a name goes.
  * - "private"  RFC 1918, CGNAT, unique-local IPv6 and friends.
  * - "public"   everything else.
  *
@@ -25,10 +29,13 @@ import os from "node:os";
  * dev server on localhost is this tool's main use — but they have to be
  * vouched for. See `connector.ts` (`checkAuditTarget`) for the top-level rule
  * and `egress-proxy.ts` for how subresources and redirects are held to it.
+ * A fake-ip destination cannot be vouched for, since it could be anything:
+ * only --audit-allow-private-network, which gives up checking local reach
+ * altogether, opens it.
  */
-export type AddressClass = "public" | "private" | "loopback" | "blocked";
+export type AddressClass = "public" | "private" | "fake-ip" | "loopback" | "blocked";
 
-const SEVERITY: Record<AddressClass, number> = { public: 0, private: 1, loopback: 2, blocked: 3 };
+const SEVERITY: Record<AddressClass, number> = { public: 0, private: 1, "fake-ip": 2, loopback: 3, blocked: 4 };
 
 /** The most restrictive of several classes; a host is only as safe as its worst address. */
 export function worstClass(classes: AddressClass[]): AddressClass {
@@ -82,15 +89,22 @@ const PRIVATE = blockList(
     "172.16.0.0/12",
     "192.168.0.0/16",
     "100.64.0.0/10", // CGNAT, also Tailscale
-    // 198.18.0.0/15 is deliberately absent: "fake-ip" proxy setups (Clash,
-    // sing-box, Surge) answer every DNS query from that range, and treating it
-    // as private would refuse every public site for those users.
   ],
   [
     "fc00::/7", // unique local
     "fec0::/10", // deprecated site-local
   ]
 );
+
+/**
+ * Benchmarking range (RFC 2544), never routed on the internet. In practice it
+ * is what a fake-ip proxy hands out for every name, and the proxy then
+ * connects by name wherever its own rules say, loopback and the LAN included.
+ * Refused unless the policy allows the private network, so that every audit
+ * behind such a proxy fails with a message naming the flag rather than
+ * reaching this machine's services by name unnoticed.
+ */
+const FAKE_IP = blockList(["198.18.0.0/15"], []);
 
 /** Host names that never go through DNS to decide. */
 const BLOCKED_NAMES = new Set(["metadata", "metadata.google.internal", "instance-data"]);
@@ -224,6 +238,7 @@ export function classifyAddress(address: string): AddressClass {
   if (LOOPBACK.check(bare, "ipv4")) return "loopback";
   if (isOwnAddress(bare, "ipv4")) return "loopback";
   if (PRIVATE.check(bare, "ipv4")) return "private";
+  if (FAKE_IP.check(bare, "ipv4")) return "fake-ip";
   return "public";
 }
 

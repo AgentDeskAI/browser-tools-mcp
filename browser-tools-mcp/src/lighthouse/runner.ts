@@ -136,12 +136,20 @@ export function describeRefusals(
   const list = (labels: string[]) =>
     labels.slice(0, 10).join(", ") + (labels.length > 10 ? ` and ${labels.length - 10} more` : "");
   const label = (r: EgressProxy["refused"][number]) => (r.class === "blocked" ? r.host : `${r.host}:${r.port}`);
-  const forbidden = [...new Set(refused.filter((r) => !r.unresolved).map(label))];
+  const forbidden = [...new Set(refused.filter((r) => !r.unresolved && r.class !== "fake-ip").map(label))];
+  const fakeIp = [...new Set(refused.filter((r) => r.class === "fake-ip").map((r) => r.host))];
   const unresolved = [...new Set(refused.filter((r) => r.unresolved).map((r) => r.host))];
   return [
     "The audited page did not load.",
     ...(forbidden.length
       ? [`This audit tried to reach ${list(forbidden)}, which audits are not allowed to load.`]
+      : []),
+    ...(fakeIp.length
+      ? [
+          `${list(fakeIp)} resolved to 198.18.0.0/15, the range a fake-IP proxy (Clash, sing-box, Surge in ` +
+            `fake-ip mode) answers every name with, so where it really goes cannot be checked. Turn fake-ip ` +
+            `mode off while auditing, or start the connector with --audit-allow-private-network.`,
+        ]
       : []),
     ...(unresolved.length
       ? [`Could not resolve ${list(unresolved)}: check the url, or try again if the network was briefly down.`]

@@ -8,6 +8,31 @@ import { describeRefusals } from "../../src/lighthouse/runner";
  * out as the cause.
  */
 describe("describeRefusals", () => {
+  /**
+   * A page refused because its names resolved to the fake-ip range is not
+   * forbidden the way a metadata address is: the user is behind a proxy that
+   * hides the real destination, and the message has to say what to do about
+   * it, so that every audit failing behind such a proxy is not a mystery.
+   */
+  it("explains a fake-ip answer and names the flag that allows it", () => {
+    const message = describeRefusals(
+      [
+        { host: "www.example.com", port: 443, class: "fake-ip" },
+        { host: "cdn.example.net", port: 443, class: "fake-ip" },
+        { host: "www.example.com", port: 80, class: "fake-ip" },
+      ],
+      "Lighthouse was unable to reliably load the page you requested. (Status code: 403)"
+    );
+    expect(message).toBe(
+      "The audited page did not load. www.example.com, cdn.example.net resolved to 198.18.0.0/15, the range " +
+        "a fake-IP proxy (Clash, sing-box, Surge in fake-ip mode) answers every name with, so where it " +
+        "really goes cannot be checked. Turn fake-ip mode off while auditing, or start the connector with " +
+        "--audit-allow-private-network. " +
+        "(Lighthouse: Lighthouse was unable to reliably load the page you requested. (Status code: 403))"
+    );
+    expect(message).not.toMatch(/not allowed to load/);
+  });
+
   it("names every refused destination once, with the port for local ones", () => {
     const message = describeRefusals(
       [

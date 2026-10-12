@@ -115,16 +115,19 @@ be, both are worth reporting.
   reaches a loopback or private origin only when the user has it open in a
   connected tab under a local name, or has allowlisted it. Every request it
   makes goes through a checking proxy that connects to the address it vetted,
-  and WebRTC is kept off direct UDP. One known limit: with a fake-IP proxy
-  (Clash, mihomo, sing-box or Surge in fake-ip mode), every name resolves to
-  198.18.0.0/15 and that proxy picks the real address later, so the check
-  cannot see where a name really goes, and every name passes as public with
-  no tab needed. Wherever that proxy's rules connect a name directly (rules
-  sending LAN and loopback ranges DIRECT are common), an audit, or any page
-  it loads, can reach this machine's services and the LAN by name
-  (`127.0.0.1.nip.io:6379`, a LAN host's name), and cloud metadata by any
-  name that resolves to it. On such a machine, turn fake-ip mode off while
-  auditing, or exclude the audit tools.
+  and WebRTC is kept off direct UDP. Behind a fake-IP proxy (Clash, mihomo,
+  sing-box or Surge in fake-ip mode) every name resolves to 198.18.0.0/15 and
+  that proxy picks the real address later, so the check cannot see where a
+  name really goes. Such answers are refused, for the audited page and for
+  everything it loads, so on such a machine every audit fails with a message
+  that names the way out: turn fake-ip mode off while auditing, or start the
+  connector with `--audit-allow-private-network`. That flag switches the
+  local-reach check off, and then, wherever the proxy's rules connect a name
+  directly (rules sending LAN and loopback ranges DIRECT are common), an
+  audit, or any page it loads, can reach this machine's services and the LAN
+  by name (`127.0.0.1.nip.io:6379`, a LAN host's name), and cloud metadata by
+  any name that resolves to it. A tab or `--audit-allow-origin` entry never
+  opens the range, because the address says nothing about the destination.
 
 These are covered by regression tests in
 `browser-tools-mcp/test/integration/connector-security.test.ts`, which assert

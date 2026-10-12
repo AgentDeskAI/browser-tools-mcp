@@ -40,7 +40,8 @@ async function main(): Promise<void> {
         `                           may target or load even when no tab is open on them\n` +
         `      --audit-allow-private-network\n` +
         `                           Let audits reach any loopback or private address, except the\n` +
-        `                           audits' own ports (not recommended)\n\n` +
+        `                           audits' own ports (not recommended). Also needed behind a\n` +
+        `                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)\n\n` +
         `Audit settings apply to every MCP client that attaches to this connector.\n`
     );
     return;

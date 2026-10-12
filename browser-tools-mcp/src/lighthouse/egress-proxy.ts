@@ -33,8 +33,8 @@ const log = createLogger("lighthouse");
  */
 export interface EgressPolicy {
   /**
-   * Every loopback and private destination allowed, except the audits' own
-   * ports (see `refusePort`). Blocked ones never are.
+   * Every loopback, private and fake-ip destination allowed, except the
+   * audits' own ports (see `refusePort`). Blocked ones never are.
    */
   allowPrivate: boolean;
   /**
@@ -213,6 +213,10 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     // localhost does.
     if (dest.class === "loopback" && auditPorts.has(port)) return false;
     if (dest.class === "public") return true;
+    // A fake-ip address is a placeholder for whatever the proxy behind it
+    // decides, so no origin can vouch for it; only giving up on local reach
+    // altogether (allowPrivate) lets it through.
+    if (dest.class === "fake-ip") return policy.allowPrivate;
     return policy.allowPrivate || allowedLocal.has(destinationKey(dest.host, port));
   }
 

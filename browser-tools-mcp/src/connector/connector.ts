@@ -105,7 +105,9 @@ export interface ConnectorConfig {
   /**
    * Let audits reach any loopback or private address. Off by default: with it
    * on, anything that can call an audit tool can make the audit browser read
-   * internal services. Link-local and metadata addresses stay blocked.
+   * internal services. Link-local and metadata addresses stay blocked. Also
+   * the only way to audit behind a fake-IP proxy, whose 198.18.0.0/15 answers
+   * are refused otherwise.
    */
   auditAllowPrivateNetwork?: boolean;
   /** Injectable so audits can be exercised without launching a browser. */
@@ -1160,6 +1162,16 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
     if (config.auditAllowPrivateNetwork) return { allowPrivate: true, allowedOrigins: [] };
     if (dest.class === "public") return { allowPrivate: false, allowedOrigins: [] };
+    // A fake-ip address stands for whatever the proxy behind it decides, so no
+    // tab or allowlist entry can vouch for it (see `destination.ts`).
+    if (dest.class === "fake-ip") {
+      throw new AuditError(
+        `Refusing to audit ${parsed.hostname}: it resolves to 198.18.0.0/15, the range a fake-IP proxy ` +
+          `(Clash, sing-box, Surge in fake-ip mode) answers every name with, so where it really goes cannot ` +
+          `be checked. Turn fake-ip mode off while auditing, or start the connector with ` +
+          `--audit-allow-private-network.`
+      );
+    }
 
     const origin = originOf(parsed)!;
     const vouched = vouchedOrigins();

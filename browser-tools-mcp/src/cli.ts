@@ -182,7 +182,8 @@ Options:
                            may target or load even when no tab is open on them
       --audit-allow-private-network
                            Let audits reach any loopback or private address, except the
-                           audits' own ports (not recommended)
+                           audits' own ports (not recommended). Also needed behind a
+                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)
 
 Environment:
   BROWSER_TOOLS_PORT, BROWSER_TOOLS_HOST, BROWSER_TOOLS_SCREENSHOT_DIR,

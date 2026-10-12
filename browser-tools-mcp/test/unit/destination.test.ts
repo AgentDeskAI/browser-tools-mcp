@@ -61,7 +61,15 @@ describe("classifyAddress", () => {
     ["8.8.8.8", "public"],
     ["93.184.215.14", "public"],
     ["2606:4700::1111", "public"],
-    ["198.18.0.1", "public"], // fake-ip proxies; see destination.ts
+    // RFC 2544 benchmarking range, handed out for every name by fake-ip
+    // proxies (Clash, sing-box, Surge), so it says nothing about the real
+    // destination; see destination.ts.
+    ["198.18.0.1", "fake-ip"],
+    ["198.19.255.255", "fake-ip"],
+    ["::ffff:198.18.0.1", "fake-ip"],
+    ["64:ff9b::c612:1", "fake-ip"], // NAT64 of 198.18.0.1
+    ["198.17.255.255", "public"],
+    ["198.20.0.1", "public"],
   ];
   // Only loopback on the interfaces, so a test runner that happens to own
   // one of these addresses does not change the answer.
@@ -290,6 +298,9 @@ describe("originOf", () => {
 
   it("picks the most restrictive class", () => {
     expect(worstClass(["public", "loopback", "private"])).toBe("loopback");
+    expect(worstClass(["public", "fake-ip", "private"])).toBe("fake-ip");
+    expect(worstClass(["fake-ip", "loopback"])).toBe("loopback");
+    expect(worstClass(["fake-ip", "blocked"])).toBe("blocked");
     expect(worstClass([])).toBe("public");
   });
 });

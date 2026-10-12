@@ -264,6 +264,7 @@ describe("audit destination policy", () => {
       screenshotDir: guardedDir,
       auditLookup: async (host) => {
         if (host === "nxdomain.example.com") throw new Error("ENOTFOUND");
+        if (host === "fake.example.com") return ["198.18.0.5"];
         return host === "intranet.test" ? ["10.0.0.7"] : host === "rebind.example.com" ? [rebindTo] : ["93.184.215.14"];
       },
       auditRunner: async ({ url, category, egress }) => {
@@ -607,6 +608,29 @@ describe("audit destination policy", () => {
     await vi.waitFor(() => expect(guarded.listTabs().find((t) => t.tabId === 12)).toBeUndefined());
   });
 
+  /**
+   * Behind a fake-ip proxy every name resolves to 198.18.0.0/15 and that
+   * proxy picks the real address later, so the answer says nothing about
+   * where the audit would go. No tab vouches for it, not even one open on the
+   * address itself, and the refusal says what to do.
+   */
+  it("refuses a name that resolves to the fake-ip range, whatever tab is open, and names the flag", async () => {
+    const byName = await openTab(13, "http://fake.example.com/");
+    const byAddress = await openTab(14, "http://198.18.0.5/");
+    try {
+      const before = audited.length;
+      for (const url of ["http://fake.example.com/", "https://fake.example.com/", "http://198.18.0.5/"]) {
+        const res = await audit(url);
+        expect(res.status, url).toBe(422);
+        expect(res.body.error, url).toMatch(/198\.18\.0\.0\/15/);
+        expect(res.body.error, url).toMatch(/--audit-allow-private-network/);
+      }
+      expect(audited.length).toBe(before);
+    } finally {
+      await Promise.all([byName.close(), byAddress.close()]);
+    }
+  });
+
   it("honours --audit-allow-origin, with or without a scheme, by scheme, host and port", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-allow-"));
     const ran: string[] = [];
@@ -646,6 +670,44 @@ describe("audit destination policy", () => {
     } finally {
       await allowed.close();
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("opens the fake-ip range to --audit-allow-private-network only, never to --audit-allow-origin", async () => {
+    const start = (flags: { auditAllowedOrigins?: string[]; auditAllowPrivateNetwork?: boolean }, ran: string[]) =>
+      createConnector({
+        port: 0,
+        screenshotDir: fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-fakeip-")),
+        ...flags,
+        auditLookup: async () => ["198.18.0.5"],
+        auditRunner: async ({ url, category, egress }) => {
+          ran.push(`${url} allowPrivate=${egress.allowPrivate}`);
+          return { category, score: 100, metadata: { url }, summary: {}, issues: [] } as any;
+        },
+      });
+    const post = (c: Connector, url: string) =>
+      request(`http://127.0.0.1:${c.port}`)
+        .post("/api/audit/seo")
+        .set("Authorization", `Bearer ${c.token}`)
+        .send({ url });
+
+    const listed: string[] = [];
+    const allowlisted = await start({ auditAllowedOrigins: ["https://fake.example.com", "http://198.18.0.5"] }, listed);
+    try {
+      expect((await post(allowlisted, "https://fake.example.com/")).status).toBe(422);
+      expect((await post(allowlisted, "http://198.18.0.5/")).status).toBe(422);
+      expect(listed).toEqual([]);
+    } finally {
+      await allowlisted.close();
+    }
+
+    const opened: string[] = [];
+    const open = await start({ auditAllowPrivateNetwork: true }, opened);
+    try {
+      expect((await post(open, "https://fake.example.com/")).status).toBe(200);
+      expect(opened).toEqual(["https://fake.example.com/ allowPrivate=true"]);
+    } finally {
+      await open.close();
     }
   });
 });

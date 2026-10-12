@@ -47,7 +47,15 @@ back as its `final-screenshot`.
   `127.0.0.1:3000`, and a Host-routing proxy serves another site under each
   name. A page whose API runs on another local port loads it once that port
   is open in a tab or passed to `--audit-allow-origin`. A public page loads
-  nothing local, except behind a fake-IP proxy (see SECURITY.md).
+  nothing local.
+- **Fake-IP answers are refused.** Behind a fake-IP proxy (Clash, mihomo,
+  sing-box or Surge in fake-ip mode) every name resolves to 198.18.0.0/15 and
+  the proxy picks the real address later, so where a name goes cannot be
+  checked, and loopback or LAN services would be reachable by name. Audits
+  refuse such answers, for the audited page and everything it loads, and the
+  error names the way out: turn fake-ip mode off while auditing, or pass
+  `--audit-allow-private-network`, which gives up checking local reach (see
+  SECURITY.md). No tab or `--audit-allow-origin` entry opens the range.
 - New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
   (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
