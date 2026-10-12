@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import os from "node:os";
 import {
   classifyAddress,
   resolveDestination,
@@ -61,8 +62,71 @@ describe("classifyAddress", () => {
     ["2606:4700::1111", "public"],
     ["198.18.0.1", "public"], // fake-ip proxies; see destination.ts
   ];
+  // Only loopback on the interfaces, so a test runner that happens to own
+  // one of these addresses does not change the answer.
+  beforeEach(() => {
+    vi.spyOn(os, "networkInterfaces").mockReturnValue(interfaces([]));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it.each(cases)("%s is %s", (address, expected) => {
     expect(classifyAddress(address)).toBe(expected);
+  });
+});
+
+function interfaces(addresses: string[]): ReturnType<typeof os.networkInterfaces> {
+  const entry = (address: string): os.NetworkInterfaceInfo =>
+    address.includes(":")
+      ? { address, family: "IPv6", netmask: "ffff:ffff:ffff:ffff::", mac: "00:00:00:00:00:00", internal: false, cidr: null, scopeid: 0 }
+      : { address, family: "IPv4", netmask: "255.255.255.0", mac: "00:00:00:00:00:00", internal: false, cidr: null };
+  return { lo0: [entry("127.0.0.1"), entry("::1")], en0: addresses.map(entry) };
+}
+
+/**
+ * A service bound to 0.0.0.0 or :: answers on every address this machine
+ * has, not only on 127.0.0.1. A global IPv6 address, or a public IPv4 on a
+ * cloud VM, is listed as public, and a page can learn it from the audit's own
+ * connection to it, so it has to count as this machine.
+ */
+describe("this machine's own addresses", () => {
+  beforeEach(() => {
+    vi.spyOn(os, "networkInterfaces").mockReturnValue(
+      interfaces(["2600:4040:a30b:cf00::4345", "192.168.1.201", "203.0.114.7"])
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("are loopback, in any spelling", () => {
+    for (const address of [
+      "2600:4040:a30b:cf00::4345",
+      "2600:4040:a30b:cf00:0:0:0:4345",
+      "[2600:4040:a30b:cf00::4345]",
+      "203.0.114.7",
+      "::ffff:203.0.114.7",
+      "::ffff:cb00:7207",
+      "192.168.1.201",
+    ]) {
+      expect(classifyAddress(address), address).toBe("loopback");
+    }
+  });
+
+  it("leave their neighbours as they were", () => {
+    expect(classifyAddress("2600:4040:a30b:cf00::4346")).toBe("public");
+    expect(classifyAddress("203.0.114.8")).toBe("public");
+    expect(classifyAddress("192.168.1.202")).toBe("private");
+  });
+
+  it("make a name that resolves to one loopback too", async () => {
+    const dest = await resolveDestination("me.example.com", async () => ["93.184.215.14", "2600:4040:a30b:cf00::4345"]);
+    expect(dest.class).toBe("loopback");
+  });
+
+  it("are not needed to classify anything else", () => {
+    vi.spyOn(os, "networkInterfaces").mockImplementation(() => {
+      throw new Error("uv_interface_addresses: permission denied");
+    });
+    expect(classifyAddress("8.8.8.8")).toBe("public");
+    expect(classifyAddress("127.0.0.1")).toBe("loopback");
   });
 });
 

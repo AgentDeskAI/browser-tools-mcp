@@ -348,6 +348,33 @@ describe("audit destination policy", () => {
     expect(audited.at(-1)).toEqual({ url: "https://example.com/", allowPrivate: false });
   });
 
+  it("treats this machine's own addresses as this machine, not as public sites", async () => {
+    // A global IPv6 address is in public space, but a dev server bound to ::
+    // answers on it.
+    vi.spyOn(os, "networkInterfaces").mockReturnValue({
+      en0: [
+        {
+          address: "2600:4040:a30b:cf00::4345",
+          family: "IPv6",
+          netmask: "ffff:ffff:ffff:ffff::",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: null,
+          scopeid: 0,
+        },
+      ],
+    });
+    try {
+      const before = audited.length;
+      const res = await audit("http://[2600:4040:a30b:cf00::4345]:3000/");
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatch(/on this machine and is not open in a connected browser tab/);
+      expect(audited.length).toBe(before);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("audits a localhost page the user has open in a connected tab", async () => {
     const ext = await openTab(1, "http://localhost:3000/dashboard");
     try {

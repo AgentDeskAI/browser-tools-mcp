@@ -1,5 +1,6 @@
 import dns from "node:dns";
 import net from "node:net";
+import os from "node:os";
 
 /**
  * Where an audit is allowed to send the headless browser.
@@ -15,7 +16,8 @@ import net from "node:net";
  * - "blocked"  never reachable: link-local (cloud metadata lives here),
  *              unspecified, multicast, reserved and documentation ranges,
  *              known metadata addresses and names.
- * - "loopback" this machine.
+ * - "loopback" this machine: 127.0.0.0/8, ::1, and every address on its
+ *              network interfaces.
  * - "private"  RFC 1918, CGNAT, unique-local IPv6 and friends.
  * - "public"   everything else.
  *
@@ -181,6 +183,32 @@ export function isLocalName(rawHost: string): boolean {
   return LOCAL_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
+/**
+ * This machine's own addresses, on every interface, read afresh each time
+ * (addresses come and go: DHCP, IPv6 privacy addresses, a VPN coming up).
+ *
+ * A service bound to 0.0.0.0 or :: answers on all of them, not only on
+ * 127.0.0.1, and the ranges above list a global IPv6 address, or a public
+ * IPv4 on a cloud VM, as public. A page can learn such an address from the
+ * audit's own connection to its server.
+ */
+function isOwnAddress(bare: string, family: "ipv4" | "ipv6"): boolean {
+  let interfaces: ReturnType<typeof os.networkInterfaces>;
+  try {
+    interfaces = os.networkInterfaces();
+  } catch {
+    // Some sandboxes refuse to list interfaces; nothing more is known then.
+    return false;
+  }
+  const own = new net.BlockList();
+  for (const entry of Object.values(interfaces).flat()) {
+    if (!entry) continue;
+    const address = entry.address.replace(/%.*$/, "");
+    own.addAddress(address, net.isIPv6(address) ? "ipv6" : "ipv4");
+  }
+  return own.check(bare, family);
+}
+
 /** Classifies a literal IP address. Anything that is not a valid IP is blocked. */
 export function classifyAddress(address: string): AddressClass {
   const bare = address.replace(/^\[|\]$/g, "").replace(/%.*$/, "");
@@ -194,6 +222,7 @@ export function classifyAddress(address: string): AddressClass {
   }
   if (BLOCKED.check(bare, "ipv4")) return "blocked";
   if (LOOPBACK.check(bare, "ipv4")) return "loopback";
+  if (isOwnAddress(bare, "ipv4")) return "loopback";
   if (PRIVATE.check(bare, "ipv4")) return "private";
   return "public";
 }
@@ -201,6 +230,7 @@ export function classifyAddress(address: string): AddressClass {
 function classifyV6Only(bare: string): AddressClass {
   if (BLOCKED.check(bare, "ipv6")) return "blocked";
   if (LOOPBACK.check(bare, "ipv6")) return "loopback";
+  if (isOwnAddress(bare, "ipv6")) return "loopback";
   if (PRIVATE.check(bare, "ipv6")) return "private";
   return "public";
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 import type { AddressInfo } from "node:net";
 import { AUDIT_BROWSER_PREFS, proxyChromeFlags, startEgressProxy } from "../../src/lighthouse/egress-proxy";
 
@@ -73,6 +74,28 @@ describe("audit egress proxy", () => {
       expect(res.body).not.toContain("INTERNAL-SECRET");
       expect(await connectVia(proxy.port, `127.0.0.1:${internalPort}`)).toMatch(/403/);
       expect(await connectVia(proxy.port, `[::1]:${internalPort}`)).toMatch(/403/);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  /**
+   * A server bound to 0.0.0.0 or :: (next dev --hostname ::, python -m
+   * http.server, a published Docker port) answers on every address this
+   * machine has. A hostile page learns the global IPv6 one from the audit's
+   * own connection to it, so those must be refused like 127.0.0.1. Checked
+   * against this machine's real interfaces, when it has any besides loopback.
+   */
+  const ownAddress = Object.values(os.networkInterfaces())
+    .flat()
+    .find((entry) => entry && !entry.internal && !/^fe80:/i.test(entry.address))?.address;
+  it.skipIf(!ownAddress)("refuses this machine's own addresses on its other interfaces, as loopback", async () => {
+    const proxy = await startEgressProxy({ allowPrivate: false });
+    const host = ownAddress!.includes(":") ? `[${ownAddress}]` : ownAddress!;
+    try {
+      expect((await viaProxy(proxy.port, `http://${host}:${internalPort}/`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `${host}:${internalPort}`)).toMatch(/403/);
+      expect(proxy.refused).toEqual([{ host: ownAddress, port: internalPort, class: "loopback" }]);
     } finally {
       await proxy.close();
     }

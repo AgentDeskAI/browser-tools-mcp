@@ -19,9 +19,12 @@ back as its `final-screenshot`.
   `metadata.google.internal`, AWS IMDS over IPv6, Alibaba, and the rest) are
   never audited, in any spelling: IPv4-mapped, IPv4-compatible and
   IPv4-translated IPv6, NAT64, 6to4, decimal, hex and octal forms are all
-  classified the same way. Pages on localhost or a private network are
-  audited only while that origin is open in a connected tab (the normal
-  dev-server flow keeps working), or when allowlisted. A tab vouches only for
+  classified the same way. Every address on this machine's own network
+  interfaces counts as this machine, so a service bound to `0.0.0.0` or `::`
+  is not reachable through the machine's LAN or global IPv6 address either.
+  Pages on localhost or a private network are audited only while that origin
+  is open in a connected tab (the normal dev-server flow keeps working), or
+  when allowlisted. A tab vouches only for
   a local name — an IP address, `localhost`, a single-label name, or a name
   under `.test`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like — so
   a public site the user has open cannot rebind its own name to a LAN address
