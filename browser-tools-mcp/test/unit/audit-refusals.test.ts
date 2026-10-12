@@ -21,9 +21,28 @@ describe("describeRefusals", () => {
     );
     expect(message).toBe(
       "The audited page did not load. This audit tried to reach clients2.google.com, 127.0.0.1:8500, " +
-        "192.0.2.1, gone.example (does not resolve), which audits are not allowed to load. " +
+        "192.0.2.1, which audits are not allowed to load. Could not resolve gone.example: check the url, " +
+        "or try again if the network was briefly down. " +
         "(Lighthouse: Lighthouse was unable to reliably load the page you requested. (Status code: 403))"
     );
+  });
+
+  /**
+   * A name that fails to resolve during the audit (a DNS blip, or a page
+   * redirecting to a name that does not exist) is not one audits are
+   * forbidden to load, and calling it that tells the reader not to retry.
+   */
+  it("does not call a name that failed to resolve forbidden", () => {
+    const message = describeRefusals(
+      [{ host: "example.com", port: 443, class: "blocked", unresolved: true }],
+      "Lighthouse was unable to reliably load the page you requested. (Status code: 502)"
+    );
+    expect(message).toBe(
+      "The audited page did not load. Could not resolve example.com: check the url, or try again if the " +
+        "network was briefly down. (Lighthouse: Lighthouse was unable to reliably load the page you " +
+        "requested. (Status code: 502))"
+    );
+    expect(message).not.toMatch(/not allowed/);
   });
 
   it("keeps a long list short", () => {

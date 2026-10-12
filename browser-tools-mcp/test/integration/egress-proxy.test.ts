@@ -532,12 +532,39 @@ describe("audit egress proxy", () => {
       },
     });
     try {
-      // Fails closed on the hiccup itself...
-      expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(403);
+      // Fails closed on the hiccup itself, as a gateway error rather than the
+      // policy's 403: nothing forbids the host...
+      expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(502);
       // ...and asks again next time rather than refusing the host for good.
       expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(200);
       expect((await viaProxy(proxy.port, `http://flaky.test:${internalPort}/`)).status).toBe(200);
       expect(attempts).toBe(2);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  /**
+   * Failing to resolve and resolving somewhere forbidden are different
+   * refusals; recording one per host would hide the second behind the
+   * first, and a metadata hit would go unlogged as "does not resolve".
+   */
+  it("records a name that failed to resolve apart from one it was refused for", async () => {
+    let attempts = 0;
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      lookup: async () => {
+        if (++attempts === 1) throw new Error("ENOTFOUND");
+        return ["169.254.169.254"];
+      },
+    });
+    try {
+      expect((await viaProxy(proxy.port, "http://gone.example/")).status).toBe(502);
+      expect(await connectVia(proxy.port, "gone.example:443")).toMatch(/403/);
+      expect(proxy.refused).toEqual([
+        { host: "gone.example", port: 80, class: "blocked", unresolved: true },
+        { host: "gone.example", port: 443, class: "blocked" },
+      ]);
     } finally {
       await proxy.close();
     }

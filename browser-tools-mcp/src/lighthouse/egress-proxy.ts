@@ -184,7 +184,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       pending = resolveDestination(key, lookup);
       resolved.set(key, pending);
       void pending.then((dest) => {
-        if (dest.addresses.length === 0) resolved.delete(key);
+        if (dest.unresolved) resolved.delete(key);
       });
     }
     return pending;
@@ -216,26 +216,32 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     return policy.allowPrivate || allowedLocal.has(destinationKey(dest.host, port));
   }
 
-  /** Resolves, classifies and returns the vetted addresses to connect to, or null. */
-  async function vet(host: string, port: number): Promise<string[] | null> {
+  /**
+   * Resolves and classifies a destination: the vetted addresses to connect
+   * to, or why there are none. A name that does not resolve is refused
+   * (lookups fail closed) but is not forbidden, and is answered and reported
+   * as a lookup failure, not as the policy's refusal.
+   */
+  async function vet(host: string, port: number): Promise<string[] | "forbidden" | "unresolved"> {
     const dest = await resolve(host);
     if (!permitted(dest, port)) {
-      // Once per destination, and only so many: a hostile page can ask for
-      // thousands of subresources, from as many made-up hostnames.
+      // Once per destination and reason, and only so many: a hostile page can
+      // ask for thousands of subresources, from as many made-up hostnames.
       const label = dest.class === "blocked" ? dest.host : `${dest.host}:${port}`;
-      if (!warned.has(label) && warned.size < MAX_REPORTED_REFUSALS) {
-        warned.add(label);
+      const entry = `${label} (${dest.unresolved ? "does not resolve" : `${dest.class} address`})`;
+      if (!warned.has(entry) && warned.size < MAX_REPORTED_REFUSALS) {
+        warned.add(entry);
         refused.push({
           host: dest.host,
           port,
           class: dest.class,
           ...(dest.unresolved ? { unresolved: true as const } : {}),
         });
-        log.warn(`Audit browser blocked from ${label} (${dest.class} address)`);
+        log.warn(`Audit browser blocked from ${entry}`);
       }
-      return null;
+      return dest.unresolved ? "unresolved" : "forbidden";
     }
-    return dest.addresses.length > 0 ? dest.addresses : null;
+    return dest.addresses.length > 0 ? dest.addresses : "unresolved";
   }
 
   // Upstream plain-http connections are pooled per host:port, as Chrome's own
@@ -279,7 +285,11 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
 
     const vetted = await vet(target.hostname, port);
     if (res.destroyed) return;
-    if (!vetted) {
+    if (vetted === "unresolved") {
+      res.writeHead(502, { "content-type": "text/plain" }).end(`Could not resolve ${target.hostname}`);
+      return;
+    }
+    if (vetted === "forbidden") {
       res.writeHead(403, { "content-type": "text/plain" }).end("Blocked by browser-tools-mcp audit policy");
       return;
     }
@@ -324,8 +334,12 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   server.on("connect", async (req: http.IncomingMessage, client: Duplex, head: Buffer) => {
     client.on("error", () => client.destroy());
     const authority = splitHostPort(req.url ?? "", 443);
-    const vetted = authority ? await vet(authority.host, authority.port) : null;
-    if (!authority || !vetted) {
+    const vetted = authority ? await vet(authority.host, authority.port) : "forbidden";
+    if (vetted === "unresolved") {
+      client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      return;
+    }
+    if (!authority || vetted === "forbidden") {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }

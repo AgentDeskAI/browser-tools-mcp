@@ -126,24 +126,28 @@ export function assertAuditableUrl(url: string): URL {
  * Why a page that never loaded may have failed. The proxy cannot tell the
  * document's request from the page's subresources or the browser's own
  * background traffic, so this names everything refused rather than guessing
- * which one mattered.
+ * which one mattered. Names that did not resolve are told apart from
+ * destinations the policy forbids: they may well load next time.
  */
 export function describeRefusals(
   refused: EgressProxy["refused"],
   lighthouseMessage: string | undefined
 ): string {
-  const labels = [
-    ...new Set(
-      refused.map((r) =>
-        r.unresolved ? `${r.host} (does not resolve)` : r.class === "blocked" ? r.host : `${r.host}:${r.port}`
-      )
-    ),
-  ];
-  const shown = labels.slice(0, 10).join(", ") + (labels.length > 10 ? ` and ${labels.length - 10} more` : "");
-  return (
-    `The audited page did not load. This audit tried to reach ${shown}, which audits are not allowed to load.` +
-    (lighthouseMessage ? ` (Lighthouse: ${lighthouseMessage})` : "")
-  );
+  const list = (labels: string[]) =>
+    labels.slice(0, 10).join(", ") + (labels.length > 10 ? ` and ${labels.length - 10} more` : "");
+  const label = (r: EgressProxy["refused"][number]) => (r.class === "blocked" ? r.host : `${r.host}:${r.port}`);
+  const forbidden = [...new Set(refused.filter((r) => !r.unresolved).map(label))];
+  const unresolved = [...new Set(refused.filter((r) => r.unresolved).map((r) => r.host))];
+  return [
+    "The audited page did not load.",
+    ...(forbidden.length
+      ? [`This audit tried to reach ${list(forbidden)}, which audits are not allowed to load.`]
+      : []),
+    ...(unresolved.length
+      ? [`Could not resolve ${list(unresolved)}: check the url, or try again if the network was briefly down.`]
+      : []),
+    ...(lighthouseMessage ? [`(Lighthouse: ${lighthouseMessage})`] : []),
+  ].join(" ");
 }
 
 /**
@@ -192,7 +196,7 @@ export async function runLighthouseAudit(
   }
   if (top.class === "blocked") {
     throw new AuditError(
-      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, metadata or reserved address.`
+      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata or reserved address.`
     );
   }
 
