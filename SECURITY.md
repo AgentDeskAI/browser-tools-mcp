@@ -116,10 +116,15 @@ be, both are worth reporting.
   connected tab under a local name, or has allowlisted it. Every request it
   makes goes through a checking proxy that connects to the address it vetted,
   and WebRTC is kept off direct UDP. One known limit: with a fake-IP proxy
-  (Clash, sing-box or Surge in fake-ip mode), every name resolves to
+  (Clash, mihomo, sing-box or Surge in fake-ip mode), every name resolves to
   198.18.0.0/15 and that proxy picks the real address later, so the check
-  cannot see where a name really goes. On such a machine, keep audits off
-  hosts with a cloud metadata service, or exclude the audit tools.
+  cannot see where a name really goes, and every name passes as public with
+  no tab needed. Wherever that proxy's rules connect a name directly (rules
+  sending LAN and loopback ranges DIRECT are common), an audit, or any page
+  it loads, can reach this machine's services and the LAN by name
+  (`127.0.0.1.nip.io:6379`, a LAN host's name), and cloud metadata by any
+  name that resolves to it. On such a machine, turn fake-ip mode off while
+  auditing, or exclude the audit tools.
 
 These are covered by regression tests in
 `browser-tools-mcp/test/integration/connector-security.test.ts`, which assert

@@ -186,6 +186,8 @@ This tool captures whatever your browser sees, so it treats that data carefully:
   local page may load only the local origins that are open in a tab or
   allowlisted, so if your app calls an API on another local port, open that
   too or allowlist it. Audits connect directly, not through a system proxy.
+  A fake-IP proxy (Clash, sing-box, Surge) hides where names really go; see
+  SECURITY.md.
 
 Report vulnerabilities per [SECURITY.md](SECURITY.md).
 

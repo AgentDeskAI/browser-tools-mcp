@@ -47,7 +47,7 @@ back as its `final-screenshot`.
   `127.0.0.1:3000`, and a Host-routing proxy serves another site under each
   name. A page whose API runs on another local port loads it once that port
   is open in a tab or passed to `--audit-allow-origin`. A public page loads
-  nothing local.
+  nothing local, except behind a fake-IP proxy (see SECURITY.md).
 - New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
   (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
