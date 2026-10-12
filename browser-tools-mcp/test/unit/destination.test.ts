@@ -109,6 +109,19 @@ describe("this machine's own addresses", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("are read once per resolution, not once per answer", async () => {
+    const spy = vi.mocked(os.networkInterfaces);
+    spy.mockClear();
+    const dest = await resolveDestination("many.example", async () => [
+      "93.184.215.14",
+      "2606:4700::1111",
+      "::ffff:8.8.8.8",
+      "192.168.1.201",
+    ]);
+    expect(dest.class).toBe("loopback");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it("are loopback, in any spelling", () => {
     for (const address of [
       "2600:4040:a30b:cf00::4345",

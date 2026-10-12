@@ -199,54 +199,61 @@ export function isLocalName(rawHost: string): boolean {
 }
 
 /**
- * This machine's own addresses, on every interface, read afresh each time
- * (addresses come and go: DHCP, IPv6 privacy addresses, a VPN coming up).
+ * This machine's own addresses, on every interface, read afresh for each
+ * check (addresses come and go: DHCP, IPv6 privacy addresses, a VPN coming
+ * up) and shared by the addresses of one host, so that a page loading sixty
+ * hosts does not have the interfaces enumerated once per answer while a
+ * performance audit is timing it.
  *
  * A service bound to 0.0.0.0 or :: answers on all of them, not only on
  * 127.0.0.1, and the ranges above list a global IPv6 address, or a public
  * IPv4 on a cloud VM, as public. A page can learn such an address from the
  * audit's own connection to its server.
  */
-function isOwnAddress(bare: string, family: "ipv4" | "ipv6"): boolean {
+function ownAddresses(): net.BlockList {
+  const own = new net.BlockList();
   let interfaces: ReturnType<typeof os.networkInterfaces>;
   try {
     interfaces = os.networkInterfaces();
   } catch {
     // Some sandboxes refuse to list interfaces; nothing more is known then.
-    return false;
+    return own;
   }
-  const own = new net.BlockList();
   for (const entry of Object.values(interfaces).flat()) {
     if (!entry) continue;
     const address = entry.address.replace(/%.*$/, "");
     own.addAddress(address, net.isIPv6(address) ? "ipv6" : "ipv4");
   }
-  return own.check(bare, family);
+  return own;
 }
 
-/** Classifies a literal IP address. Anything that is not a valid IP is blocked. */
-export function classifyAddress(address: string): AddressClass {
-  const bare = address.replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+/**
+ * Classifies a literal IP address. Anything that is not a valid IP is
+ * blocked. `own` is this machine's addresses (see `ownAddresses`), read
+ * here unless the caller is classifying several addresses at once.
+ */
+export function classifyAddress(address: string, own: net.BlockList = ownAddresses()): AddressClass {
+  const bare = normalizeHost(address).replace(/%.*$/, "");
   const family = net.isIPv4(bare) ? "ipv4" : net.isIPv6(bare) ? "ipv6" : null;
   if (!family) return "blocked";
 
   if (family === "ipv6") {
     const v4 = embeddedIPv4(bare);
-    if (v4) return worstClass([classifyAddress(v4), classifyV6Only(bare)]);
-    return classifyV6Only(bare);
+    if (v4) return worstClass([classifyAddress(v4, own), classifyV6Only(bare, own)]);
+    return classifyV6Only(bare, own);
   }
   if (BLOCKED.check(bare, "ipv4")) return "blocked";
   if (LOOPBACK.check(bare, "ipv4")) return "loopback";
-  if (isOwnAddress(bare, "ipv4")) return "loopback";
+  if (own.check(bare, "ipv4")) return "loopback";
   if (PRIVATE.check(bare, "ipv4")) return "private";
   if (FAKE_IP.check(bare, "ipv4")) return "fake-ip";
   return "public";
 }
 
-function classifyV6Only(bare: string): AddressClass {
+function classifyV6Only(bare: string, own: net.BlockList): AddressClass {
   if (BLOCKED.check(bare, "ipv6")) return "blocked";
   if (LOOPBACK.check(bare, "ipv6")) return "loopback";
-  if (isOwnAddress(bare, "ipv6")) return "loopback";
+  if (own.check(bare, "ipv6")) return "loopback";
   if (PRIVATE.check(bare, "ipv6")) return "private";
   return "public";
 }
@@ -313,7 +320,8 @@ export async function resolveDestination(
   }
   if (addresses.length === 0) return { host, addresses, class: "blocked", unresolved: true };
 
-  return { host, addresses, class: worstClass(addresses.map(classifyAddress)) };
+  const own = ownAddresses();
+  return { host, addresses, class: worstClass(addresses.map((address) => classifyAddress(address, own))) };
 }
 
 /**

@@ -81,6 +81,11 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
       : {}),
   };
 
+  // Both spellings of the flag, and the variable, add to the same list.
+  const addAuditOrigins = (value: string | undefined) => {
+    options.auditAllowedOrigins = [...(options.auditAllowedOrigins ?? []), ...(splitList(value) ?? [])];
+  };
+
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     const next = () => argv[++i];
@@ -108,7 +113,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         options.verbose = true;
         break;
       case "--audit-allow-origin":
-        options.auditAllowedOrigins = [...(options.auditAllowedOrigins ?? []), ...(splitList(next()) ?? [])];
+        addAuditOrigins(next());
         break;
       case "--audit-allow-private-network":
         options.auditAllowPrivateNetwork = true;
@@ -142,11 +147,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         else if (arg.startsWith("--connect=")) options.connectUrl = arg.slice(10);
         else if (arg.startsWith("--token=")) options.token = arg.slice(8);
         else if (arg.startsWith("--screenshot-dir=")) options.screenshotDir = arg.slice(17);
-        else if (arg.startsWith("--audit-allow-origin="))
-          options.auditAllowedOrigins = [
-            ...(options.auditAllowedOrigins ?? []),
-            ...(splitList(arg.slice(21)) ?? []),
-          ];
+        else if (arg.startsWith("--audit-allow-origin=")) addAuditOrigins(arg.slice(21));
         break;
     }
   }
