@@ -623,6 +623,14 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
     const existing = tabs.get(key);
     if (existing) {
+      // A new socket for a known tab (the old one went quiet and the
+      // extension reconnected before the heartbeat dropped it) has not said
+      // where the tab is now. Whatever the old socket reported is stale: the
+      // tab may have moved to a chrome:// or error page meanwhile, which
+      // reports nothing on reconnect, and must not keep vouching for the
+      // page it left (see `openOrigins`). The new socket reports its page
+      // right after hello.
+      if (existing.connectionId !== connection.id) existing.url = "";
       existing.connectionId = connection.id;
       existing.lastActivityAt = Date.now();
     } else {

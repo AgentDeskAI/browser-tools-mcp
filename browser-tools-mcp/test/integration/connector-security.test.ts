@@ -540,6 +540,73 @@ describe("audit destination policy", () => {
     expect(audited.length).toBe(before);
   });
 
+  /**
+   * The extension reports a tab's page on every navigation, and on reconnect
+   * by asking the page for its location. A chrome://, about:, error or
+   * extension page is not an http(s) origin, so a tab on one vouches for
+   * nothing, least of all for the local page it just left.
+   */
+  it("ends a tab's vouch when it moves to a chrome://, about:, error or extension page", async () => {
+    const ext = await openTab(11, "http://localhost:7400/");
+    try {
+      expect((await audit("http://localhost:7400/")).status).toBe(200);
+      for (const elsewhere of [
+        "chrome://settings/",
+        "about:blank",
+        "chrome-error://chromewebdata/",
+        "chrome-extension://abcdefghijklmnop/panel.html",
+        "data:text/html,<h1>x</h1>",
+      ]) {
+        ext.send({ type: "page", url: "http://localhost:7400/", tabId: 11 });
+        await vi.waitFor(async () => expect((await audit("http://localhost:7400/")).status).toBe(200));
+        ext.send({ type: "page", url: elsewhere, tabId: 11 });
+        await vi.waitFor(async () => expect((await audit("http://localhost:7400/")).status, elsewhere).toBe(422));
+        expect(guarded.listTabs().find((t) => t.tabId === 11)?.url).toBe(elsewhere);
+      }
+      // Nor can the tab's own page be audited: there is no http(s) page.
+      const own = await request(`http://127.0.0.1:${guarded.port}`)
+        .post("/api/audit/performance")
+        .set("Authorization", `Bearer ${guarded.token}`)
+        .send({ tabId: 11 });
+      expect(own.status).toBe(422);
+      expect(own.body.error).toMatch(/navigate to an http\(s\) page first/);
+    } finally {
+      await ext.close();
+    }
+  });
+
+  /**
+   * A tab's socket can go quiet and be replaced before the heartbeat drops it:
+   * the extension reconnects and binds the same tab again. The old socket's
+   * page is then stale (the tab may have moved to a chrome:// page, which
+   * reports nothing on reconnect), so the tab vouches for nothing until the
+   * new socket says where it is.
+   */
+  it("stops vouching for a tab's page when another socket binds the tab, until that socket reports", async () => {
+    const stale = await openTab(12, "http://localhost:7500/");
+    const fresh = new FakeExtension({ port: guarded.port, tabId: 12 });
+    try {
+      expect((await audit("http://localhost:7500/")).status).toBe(200);
+
+      await fresh.connect();
+      await fresh.waitForWelcome();
+      await vi.waitFor(() => expect(guarded.listTabs().find((t) => t.tabId === 12)?.url).toBe(""));
+      const res = await audit("http://localhost:7500/");
+      expect(res.status).toBe(422);
+      expect(res.body.error).toMatch(/not open in a connected browser tab/);
+
+      // The new socket reports the page, and it is vouched for again.
+      fresh.send({ type: "page", url: "http://localhost:7500/", tabId: 12 });
+      await vi.waitFor(async () => expect((await audit("http://localhost:7500/")).status).toBe(200));
+      // The old socket closing changes nothing: the tab belongs to the new one.
+      await stale.close();
+      expect((await audit("http://localhost:7500/")).status).toBe(200);
+    } finally {
+      await Promise.all([stale.close(), fresh.close()]);
+    }
+    await vi.waitFor(() => expect(guarded.listTabs().find((t) => t.tabId === 12)).toBeUndefined());
+  });
+
   it("honours --audit-allow-origin, with or without a scheme, by scheme, host and port", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-ssrf-allow-"));
     const ran: string[] = [];
