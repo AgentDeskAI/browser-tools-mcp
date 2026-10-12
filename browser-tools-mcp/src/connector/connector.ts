@@ -37,7 +37,14 @@ import {
   type AuditHooks,
   type AuditOptions,
 } from "../lighthouse/runner.js";
-import { isLocalName, originOf, resolveDestination, vouchKeyOf, vouchKeysOf } from "../lighthouse/destination.js";
+import {
+  isLocalName,
+  namesThisMachine,
+  originOf,
+  resolveDestination,
+  vouchKeyOf,
+  vouchKeysOf,
+} from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -1126,6 +1133,16 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     return key !== null && [...origins].some((origin) => vouchKeysOf(origin).includes(key));
   }
 
+  /** Whether a vouched origin is this machine's same port and scheme as the url, under another spelling. */
+  function sameLocalPort(origin: string, url: URL): boolean {
+    const candidate = originOf(origin);
+    const target = originOf(url);
+    if (!candidate || !target || candidate === target) return false;
+    const a = new URL(candidate);
+    const b = new URL(target);
+    return a.protocol === b.protocol && a.port === b.port && namesThisMachine(a.hostname);
+  }
+
   /**
    * Loopback and private origins an audit may load: the configured ones, and
    * the ones open in a connected tab under a local name. A tab on a public
@@ -1190,6 +1207,17 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
 
     const where = dest.class === "loopback" ? "this machine" : "a private network";
+    // The same port on this machine under another spelling is open: say why
+    // that does not count, rather than that nothing is open.
+    const sibling =
+      dest.class === "loopback" ? [...vouched].find((candidate) => sameLocalPort(candidate, parsed)) : undefined;
+    if (sibling) {
+      throw new AuditError(
+        `Refusing to audit ${origin}: ${sibling} is open in a connected tab, but a loopback address or ` +
+          `*.localhost name vouches for itself alone, since a service bound to one may not be the one ` +
+          `another reaches. Audit ${sibling} instead, or allow ${origin} with --audit-allow-origin.`
+      );
+    }
     if (vouchesFor(openOrigins(), parsed)) {
       throw new AuditError(
         `Refusing to audit ${origin}: ${parsed.hostname} is a public DNS name that points at ${where}. ` +

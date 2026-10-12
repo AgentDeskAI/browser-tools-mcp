@@ -302,7 +302,11 @@ describe("runtime attach behaviour", () => {
       expect(runtime.connector).toBeNull();
       await runtime.close();
       const written = stderr.mock.calls.map((call) => String(call[0])).join("");
-      expect(written).toMatch(/WARN .*--audit-allow-origin and --audit-allow-private-network are ignored/);
+      expect(written).toMatch(
+        /WARN .*--audit-allow-origin and --audit-allow-private-network .*take effect only in the process that starts the connector/
+      );
+      // Not "ignored": the connector may have been started with the very same values.
+      expect(written).not.toMatch(/ignored/);
     } finally {
       stderr.mockRestore();
     }

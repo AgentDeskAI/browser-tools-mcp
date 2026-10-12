@@ -251,6 +251,17 @@ function classifyV6Only(bare: string): AddressClass {
   return "public";
 }
 
+/**
+ * Whether a host names this machine without asking DNS: a localhost name, or
+ * an address classed loopback. For telling a user that the tab they have
+ * open is on the same machine as the page they asked to audit, under another
+ * spelling; the policy itself goes by `resolveDestination`.
+ */
+export function namesThisMachine(rawHost: string): boolean {
+  const host = normalizeHost(rawHost);
+  return isLocalhostName(host) || (net.isIP(host) !== 0 && classifyAddress(host) === "loopback");
+}
+
 export type Lookup = (host: string) => Promise<string[]>;
 
 export const systemLookup: Lookup = async (host) => {

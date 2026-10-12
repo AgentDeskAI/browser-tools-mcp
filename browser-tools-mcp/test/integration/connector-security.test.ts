@@ -418,11 +418,22 @@ describe("audit destination policy", () => {
     try {
       expect((await audit("http://127.0.0.1:3100/")).status).toBe(200);
       expect((await audit("http://[::1]:3100/")).status).toBe(422);
-      expect((await audit("http://localhost:3100/")).status).toBe(422);
+      // The refusal says which tab is open and why it does not count, rather
+      // than that nothing is open on this machine.
+      const other = await audit("http://localhost:3100/");
+      expect(other.status).toBe(422);
+      expect(other.body.error).toMatch(/http:\/\/127\.0\.0\.1:3100 is open in a connected tab/);
+      expect(other.body.error).toMatch(/vouches for itself alone/);
+      expect(other.body.error).not.toMatch(/not open in a connected browser tab/);
+      // A different port, or scheme, is not a sibling: the plain refusal.
+      expect((await audit("http://localhost:3101/")).body.error).toMatch(/not open in a connected browser tab/);
+      expect((await audit("https://127.0.0.1:3100/")).body.error).toMatch(/not open in a connected browser tab/);
 
       expect((await audit("http://app.localhost:8080/")).status).toBe(200);
       expect(audited.at(-1)!.allowedOrigins).not.toContain("http://traefik.localhost:8080");
-      expect((await audit("http://traefik.localhost:8080/")).status).toBe(422);
+      const routedOther = await audit("http://traefik.localhost:8080/");
+      expect(routedOther.status).toBe(422);
+      expect(routedOther.body.error).toMatch(/http:\/\/app\.localhost:8080 is open in a connected tab/);
       expect((await audit("http://localhost:8080/")).status).toBe(422);
     } finally {
       await Promise.all([literal.close(), routed.close()]);

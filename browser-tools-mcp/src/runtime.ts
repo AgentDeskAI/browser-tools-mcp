@@ -115,13 +115,15 @@ async function probe(baseUrl: string, timeoutMs = 400): Promise<boolean> {
 export async function createRuntime(options: CliOptions): Promise<Runtime> {
   // Audit policy belongs to the connector, so attaching leaves it as the
   // process that started the connector set it. Fails closed, but say so: the
-  // refusal message tells the user to pass the very flag they passed.
+  // refusal message tells the user to pass the very flag they passed. The
+  // values may well match the connector's (an environment variable both
+  // processes read), so this says where they count, not that they are wrong.
   const warnAuditFlagsIgnored = (where: string) => {
     if (options.auditAllowedOrigins?.length || options.auditAllowPrivateNetwork) {
       log.warn(
-        `--audit-allow-origin and --audit-allow-private-network are ignored: this process is ` +
-          `attaching to ${where}, which uses the audit settings it was started with. Pass them ` +
-          `to the process that starts the connector.`
+        `--audit-allow-origin and --audit-allow-private-network (or their BROWSER_TOOLS_AUDIT_* ` +
+          `variables) take effect only in the process that starts the connector. This process is ` +
+          `attaching to ${where}, which keeps the audit settings it was started with.`
       );
     }
   };
