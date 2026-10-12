@@ -18,7 +18,7 @@ export interface CliOptions {
   verbose: boolean;
   /** Loopback/private origins audits may target or load without an open tab. */
   auditAllowedOrigins?: string[];
-  /** Let audits reach any loopback/private address (not recommended). */
+  /** Let audits reach any loopback/private address but the audits' own ports (not recommended). */
   auditAllowPrivateNetwork: boolean;
 }
 
@@ -181,7 +181,8 @@ Options:
                            Loopback/private origins (e.g. http://localhost:3000) that audits
                            may target or load even when no tab is open on them
       --audit-allow-private-network
-                           Let audits reach any loopback or private address (not recommended)
+                           Let audits reach any loopback or private address, except the
+                           audits' own ports (not recommended)
 
 Environment:
   BROWSER_TOOLS_PORT, BROWSER_TOOLS_HOST, BROWSER_TOOLS_SCREENSHOT_DIR,

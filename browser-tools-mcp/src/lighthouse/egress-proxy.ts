@@ -32,7 +32,10 @@ const log = createLogger("lighthouse");
  *   are held to the same rule.
  */
 export interface EgressPolicy {
-  /** Every loopback and private destination allowed (blocked ones never are). */
+  /**
+   * Every loopback and private destination allowed, except the audits' own
+   * ports (see `refusePort`). Blocked ones never are.
+   */
   allowPrivate: boolean;
   /**
    * Loopback and private origins allowed one at a time when `allowPrivate` is
@@ -54,9 +57,10 @@ export interface EgressProxy {
   /** Requests refused, once per destination, for diagnostics and tests. */
   refused: Array<{ host: string; port: number; class: AddressClass; unresolved?: true }>;
   /**
-   * Refuses this port on localhost from now on, whatever the policy: for the
-   * audit browser's own DevTools port, known only once it has started. The
-   * proxy's own port is refused from the start.
+   * Refuses this port on every loopback address from now on, whatever the
+   * policy, in this audit and in every other one running until this proxy
+   * closes: for the audit browser's own DevTools port, known only once it has
+   * started. The proxy's own port is refused from the start.
    */
   refusePort(port: number): void;
   close(): Promise<void>;
@@ -103,6 +107,15 @@ function forwardable(headers: http.IncomingHttpHeaders, keep: string[] = []): ht
   for (const name of [...HOP_BY_HOP, ...named]) if (!keep.includes(name)) delete out[name];
   return out;
 }
+
+/**
+ * The ports of every running audit's own machinery on this machine: each
+ * proxy's port and each audit browser's DevTools port, counted per proxy that
+ * holds them. Shared by all proxies because audits can overlap (parallel tool
+ * calls, two MCP clients on one connector), and a page in one audit must not
+ * reach another audit's DevTools endpoint any more than its own.
+ */
+const auditPorts = new Map<number, number>();
 
 /** Refusals recorded and logged per audit; a hostile page can invent hostnames without end. */
 const MAX_REPORTED_REFUSALS = 100;
@@ -179,17 +192,30 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     return pending;
   };
 
-  // The audit's own machinery on localhost: never reachable, even with
-  // allowPrivate (--audit-allow-private-network), which otherwise lets a
-  // page reach any local port.
-  const refusedLocal = new Set<string>();
+  // The audits' own machinery: never reachable, even with allowPrivate
+  // (--audit-allow-private-network), which otherwise lets a page reach any
+  // local port.
+  const held: number[] = [];
+  const hold = (local: number) => {
+    held.push(local);
+    auditPorts.set(local, (auditPorts.get(local) ?? 0) + 1);
+  };
+  const releaseAll = () => {
+    for (const local of held.splice(0)) {
+      const count = (auditPorts.get(local) ?? 1) - 1;
+      if (count > 0) auditPorts.set(local, count);
+      else auditPorts.delete(local);
+    }
+  };
 
   function permitted(dest: ResolvedDestination, port: number): boolean {
     if (dest.class === "blocked") return false;
+    // By the addresses that would be dialled, not the name asked for: any
+    // name that resolves to 127.0.0.1 reaches these ports as surely as
+    // localhost does.
+    if (dest.class === "loopback" && auditPorts.has(port)) return false;
     if (dest.class === "public") return true;
-    const key = destinationKey(dest.host, port);
-    if (refusedLocal.has(key)) return false;
-    return policy.allowPrivate || allowedLocal.has(key);
+    return policy.allowPrivate || allowedLocal.has(destinationKey(dest.host, port));
   }
 
   /** Resolves, classifies and returns the vetted addresses to connect to, or null. */
@@ -340,16 +366,15 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const port = (server.address() as net.AddressInfo).port;
-  refusedLocal.add(destinationKey("localhost", port));
+  hold(port);
 
   return {
     port,
     refused,
-    refusePort: (local: number) => {
-      refusedLocal.add(destinationKey("localhost", local));
-    },
+    refusePort: hold,
     close: () =>
       new Promise<void>((resolve) => {
+        releaseAll();
         server.close(() => resolve());
         for (const socket of sockets) socket.destroy();
         server.closeAllConnections?.();

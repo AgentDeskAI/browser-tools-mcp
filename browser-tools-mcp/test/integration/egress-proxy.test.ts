@@ -249,6 +249,53 @@ describe("audit egress proxy", () => {
   });
 
   /**
+   * The refusal is by the address dialled, not the name asked for: any name
+   * that resolves to 127.0.0.1 (lvh.me, nip.io, a mixed answer) reaches the
+   * same port as localhost does.
+   */
+  it("refuses those ports under any name that resolves to loopback", async () => {
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      lookup: async (host) => (host === "mixed.example" ? ["93.184.215.14", "127.0.0.1"] : ["127.0.0.1"]),
+    });
+    try {
+      expect((await viaProxy(proxy.port, `http://lvh.example:${proxy.port}/`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `lvh.example:${proxy.port}`)).toMatch(/403/);
+
+      expect((await viaProxy(proxy.port, `http://lvh.example:${internalPort}/json/list`)).status).toBe(200);
+      proxy.refusePort(internalPort);
+      expect((await viaProxy(proxy.port, `http://lvh.example:${internalPort}/json/list`)).status).toBe(403);
+      expect(await connectVia(proxy.port, `lvh.example:${internalPort}`)).toMatch(/403/);
+      expect(await connectVia(proxy.port, `mixed.example:${internalPort}`)).toMatch(/403/);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  /**
+   * Audits can overlap: parallel tool calls, or two MCP clients on one
+   * connector. A page in one audit must not reach another audit's DevTools
+   * endpoint (its /json/list names the url being audited) or its proxy.
+   */
+  it("refuses the ports of every other audit running at the same time", async () => {
+    const mine = await startEgressProxy({ allowPrivate: true });
+    const other = await startEgressProxy({ allowPrivate: true });
+    try {
+      other.refusePort(internalPort);
+      expect((await viaProxy(mine.port, `http://127.0.0.1:${internalPort}/json/list`)).status).toBe(403);
+      expect(await connectVia(mine.port, `localhost:${other.port}`)).toMatch(/403/);
+    } finally {
+      await other.close();
+    }
+    try {
+      // Once that audit is over, its ports are ordinary ports again.
+      expect((await viaProxy(mine.port, `http://127.0.0.1:${internalPort}/json/list`)).status).toBe(200);
+    } finally {
+      await mine.close();
+    }
+  });
+
+  /**
    * Hop-by-hop headers belong to one connection (RFC 9110 section 7.6.1).
    * Passed through, Chrome's Upgrade or the upstream's Connection: close
    * would act on the wrong connection.

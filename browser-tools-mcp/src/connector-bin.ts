@@ -39,7 +39,8 @@ async function main(): Promise<void> {
         `                           Loopback/private origins (e.g. http://localhost:3000) that audits\n` +
         `                           may target or load even when no tab is open on them\n` +
         `      --audit-allow-private-network\n` +
-        `                           Let audits reach any loopback or private address (not recommended)\n\n` +
+        `                           Let audits reach any loopback or private address, except the\n` +
+        `                           audits' own ports (not recommended)\n\n` +
         `Audit settings apply to every MCP client that attaches to this connector.\n`
     );
     return;
