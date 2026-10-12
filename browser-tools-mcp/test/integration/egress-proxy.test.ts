@@ -118,7 +118,9 @@ describe("audit egress proxy", () => {
       expect((await viaProxy(proxy.port, "http://169.254.169.254/latest/meta-data/")).status).toBe(403);
       expect((await viaProxy(proxy.port, "http://[::ffff:a9fe:a9fe]/")).status).toBe(403);
       expect(await connectVia(proxy.port, "192.0.2.1:443")).toMatch(/403/);
-      expect(proxy.refused.map((r) => r.class)).toEqual(["blocked", "blocked", "blocked"]);
+      // Azure's WireServer sits in public address space.
+      expect((await viaProxy(proxy.port, "http://168.63.129.16/machine/?comp=goalstate")).status).toBe(403);
+      expect(proxy.refused.map((r) => r.class)).toEqual(["blocked", "blocked", "blocked", "blocked"]);
     } finally {
       await proxy.close();
     }

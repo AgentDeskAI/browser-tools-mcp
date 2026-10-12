@@ -63,6 +63,7 @@ const BLOCKED = blockList(
     "0.0.0.0/8", // "this network"; 0.0.0.0 reaches loopback services on Linux/macOS
     "169.254.0.0/16", // link-local: AWS/GCP/Azure/OCI/DO metadata at 169.254.169.254
     "100.100.100.200/32", // Alibaba Cloud metadata (inside CGNAT space)
+    "168.63.129.16/32", // Azure WireServer (goal state, extension settings), in public space
     "192.0.0.0/24", // IETF protocol assignments
     "192.0.2.0/24", // TEST-NET-1
     "198.51.100.0/24", // TEST-NET-2

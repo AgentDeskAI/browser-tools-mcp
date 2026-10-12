@@ -22,6 +22,10 @@ describe("classifyAddress", () => {
     ["169.254.169.254", "blocked"], // AWS/GCP/Azure metadata
     ["169.254.170.2", "blocked"], // ECS task metadata
     ["100.100.100.200", "blocked"], // Alibaba metadata
+    ["168.63.129.16", "blocked"], // Azure WireServer
+    ["::ffff:168.63.129.16", "blocked"],
+    ["168.63.129.15", "public"],
+    ["168.63.129.17", "public"],
     ["fd00:ec2::254", "blocked"], // AWS IMDS IPv6
     ["0.0.0.0", "blocked"],
     ["224.0.0.1", "blocked"],

@@ -17,7 +17,8 @@ back as its `final-screenshot`.
 - **Audits no longer reach link-local, cloud metadata, or unvouched loopback
   and private addresses.** Link-local and metadata addresses (169.254.0.0/16,
   `metadata.google.internal`, AWS IMDS over IPv6, Alibaba, and the rest) are
-  never audited, in any spelling: IPv4-mapped, IPv4-compatible and
+  never audited, in any spelling (Azure's WireServer at 168.63.129.16, which
+  sits in public address space, included): IPv4-mapped, IPv4-compatible and
   IPv4-translated IPv6, NAT64, 6to4, decimal, hex and octal forms are all
   classified the same way. Every address on this machine's own network
   interfaces counts as this machine, so a service bound to `0.0.0.0` or `::`

@@ -325,6 +325,7 @@ describe("audit destination policy", () => {
     "http://169.254.169.254/latest/meta-data/",
     "http://[::ffff:169.254.169.254]/",
     "http://metadata.google.internal/",
+    "http://168.63.129.16/machine/?comp=goalstate",
     "http://0.0.0.0:8080/",
   ])("always refuses metadata and reserved addresses: %s", async (url) => {
     const before = audited.length;

@@ -105,6 +105,8 @@ describe("reporter's PoC: auditing an internal-only loopback service", () => {
       "http://metadata.google.internal/computeMetadata/v1/",
       "http://[fd00:ec2::254]/",
       "http://100.100.100.200/latest/meta-data/",
+      "http://168.63.129.16/machine/?comp=goalstate", // Azure WireServer
+      "http://[::ffff:168.63.129.16]/metadata/instance",
       "http://0.0.0.0/",
     ]) {
       const res = await audit("seo", url);
