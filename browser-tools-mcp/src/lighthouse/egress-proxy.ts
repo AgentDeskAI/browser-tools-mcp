@@ -1,6 +1,6 @@
 import http from "node:http";
 import net from "node:net";
-import type { Duplex } from "node:stream";
+import { pipeline, type Duplex } from "node:stream";
 import { createLogger } from "../util/logger.js";
 import {
   destinationKey,
@@ -76,19 +76,31 @@ const HOP_BY_HOP = [
 ];
 
 /**
- * Headers to pass on to the next hop: everything except the hop-by-hop ones
- * and any the Connection header names. Passing them on lets one side's
- * connection handling (Connection: close, Keep-Alive, an Upgrade) leak onto
- * the other connection, which upsets keep-alive and the timings an audit
- * measures, or gets a 101 back that the proxy cannot relay.
+ * What says where a request's body ends and whom it is for. Node frames the
+ * body it passes upstream by these, and does not chunk a GET, DELETE or
+ * OPTIONS body unless Transfer-Encoding says to: dropped, a chunked body
+ * would go out unframed on a pooled connection and be read as the next
+ * request. So a request keeps them, even when its Connection header names
+ * them. (A response does not need its Transfer-Encoding: Node frames what it
+ * sends the browser itself.)
  */
-function forwardable(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+const REQUEST_FRAMING = ["host", "content-length", "transfer-encoding"];
+
+/**
+ * Headers to pass on to the next hop: everything except the hop-by-hop ones
+ * and any the Connection header names, but never those in `keep`. Passing
+ * them on lets one side's connection handling (Connection: close,
+ * Keep-Alive, an Upgrade) leak onto the other connection, which upsets
+ * keep-alive and the timings an audit measures, or gets a 101 back that the
+ * proxy cannot relay.
+ */
+function forwardable(headers: http.IncomingHttpHeaders, keep: string[] = []): http.OutgoingHttpHeaders {
   const named = String(headers["connection"] ?? "")
     .split(",")
     .map((name) => name.trim().toLowerCase())
     .filter(Boolean);
   const out: http.OutgoingHttpHeaders = { ...headers };
-  for (const name of [...HOP_BY_HOP, ...named]) delete out[name];
+  for (const name of [...HOP_BY_HOP, ...named]) if (!keep.includes(name)) delete out[name];
   return out;
 }
 
@@ -231,13 +243,24 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
       return;
     }
     const port = Number(target.port || 80);
+
+    // Chrome cancels requests all the time (navigation, media seeking,
+    // prefetch), often while the host is still being looked up. Stop the
+    // upstream transfer with it, or never start one, rather than keep
+    // downloading into a closed response on a pooled connection.
+    let upstream: http.ClientRequest | undefined;
+    res.on("close", () => {
+      if (!res.writableFinished) upstream?.destroy();
+    });
+
     const vetted = await vet(target.hostname, port);
+    if (res.destroyed) return;
     if (!vetted) {
       res.writeHead(403, { "content-type": "text/plain" }).end("Blocked by browser-tools-mcp audit policy");
       return;
     }
-    const headers = forwardable(req.headers);
-    const upstream = http.request(
+    const headers = forwardable(req.headers, REQUEST_FRAMING);
+    upstream = http.request(
       {
         agent,
         host: target.hostname,
@@ -259,18 +282,16 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
           res.writeHead(502).end();
           return;
         }
-        upstreamRes.pipe(res);
+        // A body that breaks off (a reset, or a close before the length it
+        // promised) breaks off the browser's response too: pipeline destroys
+        // both. Ending it cleanly would hand Chrome a truncated script as a
+        // complete 200, and pipe() alone would leave it waiting for the rest.
+        pipeline(upstreamRes, res, () => undefined);
       }
     );
     upstream.on("error", () => {
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-    });
-    // Chrome cancels requests all the time (navigation, media seeking,
-    // prefetch). Stop the upstream transfer with it, rather than keep
-    // downloading into a closed response on a pooled connection.
-    res.on("close", () => {
-      if (!res.writableFinished) upstream.destroy();
+      if (res.headersSent) res.destroy();
+      else res.writeHead(502).end();
     });
     req.pipe(upstream);
   });

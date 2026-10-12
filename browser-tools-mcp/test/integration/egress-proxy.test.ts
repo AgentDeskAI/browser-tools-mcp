@@ -311,6 +311,128 @@ describe("audit egress proxy", () => {
     }
   });
 
+  /**
+   * A response that breaks off must reach the browser broken. Finished
+   * cleanly instead, a truncated script runs and is reported as loaded; left
+   * open, the page never finishes loading and the audit waits out its timeout.
+   */
+  it("passes on an upstream response that breaks off mid-body, rather than ending or stalling it", async () => {
+    const replies = [
+      // Reset after part of a chunked body.
+      (socket: net.Socket) => {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+        setTimeout(() => socket.resetAndDestroy(), 20);
+      },
+      // Closed before the promised Content-Length, and before the last chunk.
+      (socket: net.Socket) => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello"),
+      (socket: net.Socket) => socket.end("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"),
+    ];
+    const upstreams = await Promise.all(replies.map((reply) => rawUpstream(reply)));
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    const outcome = (port: number) =>
+      new Promise<string>((resolve) => {
+        const timer = setTimeout(() => resolve("still open"), 3_000);
+        const req = http.request(
+          { host: "127.0.0.1", port: proxy.port, method: "GET", path: `http://127.0.0.1:${port}/app.js` },
+          (res) => {
+            res.resume();
+            res.on("error", () => undefined);
+            res.on("close", () => {
+              clearTimeout(timer);
+              resolve(res.complete ? "complete" : "broken");
+            });
+          }
+        );
+        req.on("error", () => {
+          clearTimeout(timer);
+          resolve("broken");
+        });
+        req.end();
+      });
+    try {
+      for (const upstream of upstreams) expect(await outcome(upstream.port)).toBe("broken");
+    } finally {
+      await proxy.close();
+      await Promise.all(upstreams.map((upstream) => upstream.close()));
+    }
+  });
+
+  /**
+   * Transfer-Encoding is what says where a request body ends. Without it, a
+   * chunked DELETE or OPTIONS body went upstream unframed on a pooled
+   * connection, where the server read it as the next request.
+   */
+  it("keeps a request body framed as it arrived", async () => {
+    const received: Array<{ method?: string; url?: string; body: string }> = [];
+    const echo = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        received.push({ method: req.method, url: req.url, body });
+        res.end("ok");
+      });
+    });
+    await new Promise<void>((r) => echo.listen(0, "127.0.0.1", () => r()));
+    const port = (echo.address() as AddressInfo).port;
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port: proxy.port,
+            method: "DELETE",
+            path: `http://127.0.0.1:${port}/item`,
+            headers: { "transfer-encoding": "chunked" },
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          }
+        );
+        req.on("error", reject);
+        req.end("GET /smuggled HTTP/1.1\r\nHost: evil.example\r\n\r\n");
+      });
+      expect(status).toBe(200);
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${port}/next`)).body).toBe("ok");
+      expect(received).toEqual([
+        { method: "DELETE", url: "/item", body: "GET /smuggled HTTP/1.1\r\nHost: evil.example\r\n\r\n" },
+        { method: "GET", url: "/next", body: "" },
+      ]);
+    } finally {
+      await proxy.close();
+      echo.closeAllConnections();
+      await new Promise<void>((r) => echo.close(() => r()));
+    }
+  });
+
+  it("does not connect upstream for a request cancelled while its host was being looked up", async () => {
+    let connections = 0;
+    const counting = net.createServer((socket) => {
+      connections++;
+      socket.destroy();
+    });
+    await new Promise<void>((r) => counting.listen(0, "127.0.0.1", () => r()));
+    const port = (counting.address() as AddressInfo).port;
+    const proxy = await startEgressProxy({
+      allowPrivate: true,
+      lookup: () => new Promise((resolve) => setTimeout(() => resolve(["127.0.0.1"]), 300)),
+    });
+    try {
+      for (let i = 0; i < 3; i++) {
+        const req = http.request({ host: "127.0.0.1", port: proxy.port, path: `http://slow${i}.test:${port}/` });
+        req.on("error", () => undefined);
+        req.end();
+        setTimeout(() => req.destroy(), 50);
+      }
+      await new Promise((r) => setTimeout(r, 700));
+      expect(connections).toBe(0);
+    } finally {
+      await proxy.close();
+      await new Promise<void>((r) => counting.close(() => r()));
+    }
+  });
+
   it("does not hold on to a failed lookup for the rest of the audit", async () => {
     let attempts = 0;
     const proxy = await startEgressProxy({
