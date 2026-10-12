@@ -249,7 +249,16 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
         setHost: false,
       } as http.RequestOptions,
       (upstreamRes) => {
-        res.writeHead(upstreamRes.statusCode ?? 502, forwardable(upstreamRes.headers));
+        // Node's client accepts replies a server response cannot carry, such
+        // as a status under 100; writeHead throws on them, and a throw here
+        // is uncaught and takes the whole process down. Any page can send one.
+        try {
+          res.writeHead(upstreamRes.statusCode ?? 502, forwardable(upstreamRes.headers));
+        } catch {
+          upstreamRes.destroy();
+          res.writeHead(502).end();
+          return;
+        }
         upstreamRes.pipe(res);
       }
     );

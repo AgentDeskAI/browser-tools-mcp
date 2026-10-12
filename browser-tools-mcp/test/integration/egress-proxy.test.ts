@@ -32,6 +32,25 @@ function viaProxy(proxyPort: number, absoluteUrl: string): Promise<{ status: num
   });
 }
 
+/** An upstream that answers every connection with `respond`, bytes as written, for replies no http.Server would send. */
+async function rawUpstream(respond: (socket: net.Socket) => void): Promise<{ port: number; close: () => Promise<void> }> {
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => undefined);
+    socket.once("data", () => respond(socket));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  return {
+    port: (server.address() as AddressInfo).port,
+    close: () =>
+      new Promise<void>((r) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => r());
+      }),
+  };
+}
+
 function connectVia(proxyPort: number, authority: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, "127.0.0.1", () => {
@@ -265,6 +284,30 @@ describe("audit egress proxy", () => {
       await proxy.close();
       echo.closeAllConnections();
       await new Promise<void>((r) => echo.close(() => r()));
+    }
+  });
+
+  /**
+   * Node's HTTP client accepts any three-digit status, but a server response
+   * cannot carry one under 100: relaying it threw out of the response
+   * callback and took the connector, and the MCP server around it, down. Any
+   * public page the audit loads can send one.
+   */
+  it("answers 502 for an upstream status it cannot relay, and keeps running", async () => {
+    const upstreams = await Promise.all(
+      ["000", "099"].map((status) =>
+        rawUpstream((socket) => socket.end(`HTTP/1.1 ${status} X\r\nContent-Length: 0\r\n\r\n`))
+      )
+    );
+    const proxy = await startEgressProxy({ allowPrivate: true });
+    try {
+      for (const upstream of upstreams) {
+        expect((await viaProxy(proxy.port, `http://127.0.0.1:${upstream.port}/`)).status).toBe(502);
+      }
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/`)).body).toBe("INTERNAL-SECRET");
+    } finally {
+      await proxy.close();
+      await Promise.all(upstreams.map((upstream) => upstream.close()));
     }
   });
 
