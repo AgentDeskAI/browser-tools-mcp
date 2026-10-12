@@ -404,6 +404,29 @@ describe("audit destination policy", () => {
     }
   });
 
+  /**
+   * Only the name localhost stands for both loopback addresses. A tab on
+   * 127.0.0.1:3100 says nothing about a service bound only to [::1]:3100, nor
+   * about localhost:3100, which may reach it. Behind a Host-routing proxy
+   * (Traefik, Caddy) every *.localhost name on one port is another site.
+   */
+  it("vouches for a loopback address, or a *.localhost name, as that host alone", async () => {
+    const literal = await openTab(8, "http://127.0.0.1:3100/");
+    const routed = await openTab(9, "http://app.localhost:8080/");
+    try {
+      expect((await audit("http://127.0.0.1:3100/")).status).toBe(200);
+      expect((await audit("http://[::1]:3100/")).status).toBe(422);
+      expect((await audit("http://localhost:3100/")).status).toBe(422);
+
+      expect((await audit("http://app.localhost:8080/")).status).toBe(200);
+      expect(audited.at(-1)!.allowedOrigins).not.toContain("http://traefik.localhost:8080");
+      expect((await audit("http://traefik.localhost:8080/")).status).toBe(422);
+      expect((await audit("http://localhost:8080/")).status).toBe(422);
+    } finally {
+      await Promise.all([literal.close(), routed.close()]);
+    }
+  });
+
   it("lets a vouched local page load the other vouched origins, and only those", async () => {
     const app = await openTab(2, "http://localhost:5173/");
     const api = await openTab(3, "http://192.168.1.20:8000/docs");
@@ -524,10 +547,13 @@ describe("audit destination policy", () => {
       expect((await post("http://localhost:4000/page")).status).toBe(200);
       expect((await post("http://127.0.0.1:5000/")).status).toBe(200);
       expect((await post("http://192.168.1.50/admin")).status).toBe(200);
-      // Another spelling of this machine is the same host, as the egress proxy
-      // already treats it: localhost:4000 and 127.0.0.1:4000 are one port.
+      // The name localhost stands for both loopback addresses, as the egress
+      // proxy treats it: localhost:4000 covers 127.0.0.1:4000 and [::1]:4000.
       expect((await post("http://127.0.0.1:4000/")).status).toBe(200);
       expect((await post("http://[::1]:4000/")).status).toBe(200);
+      // An address covers only itself.
+      expect((await post("http://[::1]:5000/")).status).toBe(422);
+      expect((await post("http://localhost:5000/")).status).toBe(422);
       // Different port, scheme or host: not the allowlisted origin.
       expect((await post("http://localhost:4001/")).status).toBe(422);
       expect((await post("https://localhost:4000/")).status).toBe(422);

@@ -208,6 +208,24 @@ describe("audit egress proxy", () => {
     }
   });
 
+  it("lets a vouch for one loopback address or *.localhost name cover that host alone", async () => {
+    const proxy = await startEgressProxy({
+      allowPrivate: false,
+      allowedOrigins: [`http://127.0.0.1:${internalPort}`, `http://app.localhost:${internalPort}`],
+    });
+    try {
+      expect((await viaProxy(proxy.port, `http://127.0.0.1:${internalPort}/`)).status).toBe(200);
+      expect((await viaProxy(proxy.port, `http://app.localhost:${internalPort}/`)).status).toBe(200);
+      // A service bound only to ::1 is another service, and localhost may reach it.
+      expect(await connectVia(proxy.port, `[::1]:${internalPort}`)).toMatch(/403/);
+      expect((await viaProxy(proxy.port, `http://localhost:${internalPort}/`)).status).toBe(403);
+      // Another site behind the same Host-routing port.
+      expect((await viaProxy(proxy.port, `http://traefik.localhost:${internalPort}/`)).status).toBe(403);
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("asks DNS once per host for the whole audit", async () => {
     const asked: string[] = [];
     const proxy = await startEgressProxy({

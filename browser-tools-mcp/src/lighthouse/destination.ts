@@ -290,39 +290,52 @@ export async function resolveDestination(
 }
 
 /**
- * Whether a host is one of the spellings of what localhost means: a localhost
- * name, 127.0.0.1, ::1, or 127.0.0.1 mapped into IPv6 (::ffff:127.0.0.1, which
- * the kernel delivers to the IPv4 loopback). Chrome connects a localhost name
- * to 127.0.0.1 or ::1, so a server reachable as one is reachable as the others.
- *
- * Narrower than the "loopback" class on purpose:
- * - Other 127.x addresses are other bind addresses. A service on
- *   127.0.0.2:8080 is not the one on 127.0.0.1:8080.
- * - NAT64, 6to4 and IPv4-compatible addresses embedding 127.0.0.1 are classed
- *   loopback so they are refused like it, but a connection to one leaves the
- *   machine for a translator or relay.
+ * One way of writing each address, so the forms of one address compare
+ * equal: IPv6 compressed and in lower case, in brackets; an IPv4-mapped IPv6
+ * address (::ffff:127.0.0.1, ::ffff:7f00:1) as the IPv4 address the kernel
+ * delivers it to. Names are left as they are.
  */
-function isLocalhostSpelling(host: string): boolean {
-  if (isLocalhostName(host)) return true;
-  if (net.isIPv4(host)) return host === "127.0.0.1";
+function canonicalHost(host: string): string {
+  if (!net.isIPv6(host)) return host;
   const groups = expandIPv6(host);
-  if (!groups) return false;
-  const loopbackV6 = groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1;
-  const mappedLocalhost =
-    groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff && groups[6] === 0x7f00 && groups[7] === 1;
-  return loopbackV6 || mappedLocalhost;
+  if (groups && groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return `${groups[6]! >> 8}.${groups[6]! & 0xff}.${groups[7]! >> 8}.${groups[7]! & 0xff}`;
+  }
+  try {
+    return new URL(`http://[${host}]/`).hostname;
+  } catch {
+    return host; // a zone id; link-local is blocked whatever its key
+  }
 }
 
 /**
  * How the egress proxy matches a loopback or private destination against the
  * origins an audit may load: host:port, scheme-blind because a CONNECT carries
- * none. The spellings of localhost (localhost, *.localhost, 127.0.0.1, ::1) are
- * one host, so a page on localhost:3000 can still load 127.0.0.1:3000. Any
- * other address is its own host (see `isLocalhostSpelling`).
+ * none. Every name and every address is its own host; only the forms of one
+ * address are folded together (see `canonicalHost`). What a vouch covers
+ * beyond its own key is `destinationKeysOf`'s business.
  */
 export function destinationKey(rawHost: string, port: number | string): string {
-  const host = normalizeHost(rawHost);
-  return `${isLocalhostSpelling(host) ? "localhost" : host}:${port}`;
+  return `${canonicalHost(normalizeHost(rawHost))}:${port}`;
+}
+
+/**
+ * The keys a vouch for this host and port covers. Only the name localhost
+ * reaches past its own key: Chrome connects it to 127.0.0.1 or ::1, whichever
+ * answers, so a page open as localhost:3000 may be served from either, and a
+ * vouch for it covers both. The rest cover themselves alone:
+ * - An address. A service on 127.0.0.1:3000 says nothing about another bound
+ *   only to [::1]:3000, nor about localhost:3000, which may reach that one.
+ *   Other 127.x addresses, and NAT64 or 6to4 forms embedding 127.0.0.1, are
+ *   other places again.
+ * - A *.localhost name. Host-routed dev setups (Traefik, Caddy, puma-dev)
+ *   serve a different site under each name behind one port, so a tab on
+ *   app.localhost vouches for app.localhost, not traefik.localhost.
+ */
+function coveredKeys(rawHost: string, port: number | string): string[] {
+  const key = destinationKey(rawHost, port);
+  if (normalizeHost(rawHost) !== "localhost") return [key];
+  return [key, destinationKey("127.0.0.1", port), destinationKey("::1", port)];
 }
 
 /** Scheme, host and port of an http(s) url, the default port made explicit; null for anything else. */
@@ -337,20 +350,29 @@ function httpEndpoint(url: string | URL): { protocol: string; hostname: string; 
   }
 }
 
-/** destinationKey for an origin or url; null for anything that is not http(s). */
-export function destinationKeyOf(url: string | URL): string | null {
+/** The keys a vouch for this origin or url covers (see `coveredKeys`); none for anything that is not http(s). */
+export function destinationKeysOf(url: string | URL): string[] {
   const endpoint = httpEndpoint(url);
-  return endpoint ? destinationKey(endpoint.hostname, endpoint.port) : null;
+  return endpoint ? coveredKeys(endpoint.hostname, endpoint.port) : [];
 }
 
 /**
- * What a vouch is compared by: the scheme plus `destinationKey`, so the
- * connector deciding whether a page may be audited and the proxy deciding
- * what it may load agree on what counts as the same place.
+ * What the connector compares a vouch by: the scheme plus `destinationKey`,
+ * so the connector deciding whether a page may be audited and the proxy
+ * deciding what it may load agree on what counts as the same place. The
+ * proxy matches host and port only, as a CONNECT carries no scheme.
  */
 export function vouchKeyOf(url: string | URL): string | null {
   const endpoint = httpEndpoint(url);
   return endpoint ? `${endpoint.protocol}//${destinationKey(endpoint.hostname, endpoint.port)}` : null;
+}
+
+/** `destinationKeysOf` with the scheme, as `vouchKeyOf` writes it. */
+export function vouchKeysOf(url: string | URL): string[] {
+  const endpoint = httpEndpoint(url);
+  return endpoint
+    ? coveredKeys(endpoint.hostname, endpoint.port).map((key) => `${endpoint.protocol}//${key}`)
+    : [];
 }
 
 /** The scheme://host:port an origin check compares, with default ports made explicit. */

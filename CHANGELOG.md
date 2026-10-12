@@ -38,12 +38,16 @@ back as its `final-screenshot`.
   Lookups fail closed. WebRTC is kept off direct UDP, so it cannot go around
   the proxy either.
 - **A local page reaches only the local origins vouched for.** Auditing
-  `http://localhost:3000` lets that page load `localhost:3000` (also spelled
-  `127.0.0.1` or `[::1]`) and the other origins open in a tab or allowlisted, not
-  every loopback and private address, so a dev server's open redirect cannot
-  carry the audit to another service. A page whose API runs on another local
-  port loads it once that port is open in a tab or passed to
-  `--audit-allow-origin`. A public page loads nothing local.
+  `http://localhost:3000` lets that page load `localhost:3000` (and
+  `127.0.0.1:3000` or `[::1]:3000`, either of which the name may reach) and
+  the other origins open in a tab or allowlisted, not every loopback and
+  private address, so a dev server's open redirect cannot carry the audit to
+  another service. An address, or a `*.localhost` name, vouches for itself
+  alone: a service bound only to `[::1]:3000` is not the one on
+  `127.0.0.1:3000`, and a Host-routing proxy serves another site under each
+  name. A page whose API runs on another local port loads it once that port
+  is open in a tab or passed to `--audit-allow-origin`. A public page loads
+  nothing local.
 - New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
   (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
   `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that

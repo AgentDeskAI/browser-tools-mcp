@@ -4,7 +4,7 @@ import { pipeline, type Duplex } from "node:stream";
 import { createLogger } from "../util/logger.js";
 import {
   destinationKey,
-  destinationKeyOf,
+  destinationKeysOf,
   normalizeHost,
   resolveDestination,
   systemLookup,
@@ -43,7 +43,7 @@ export interface EgressPolicy {
    * Trusting one local origin must not open every other one: a dev server's
    * open redirect or a framed page would otherwise reach the router, another
    * local service, or the audit browser's own debugging port. Matched by
-   * host:port (see `destinationKey`).
+   * host:port (see `destinationKeysOf`).
    */
   allowedOrigins?: string[];
   /** Injectable for tests. */
@@ -169,9 +169,7 @@ export async function startEgressProxy(policy: EgressPolicy): Promise<EgressProx
   const connectTimeoutMs = policy.connectTimeoutMs ?? 10_000;
   const refused: EgressProxy["refused"] = [];
   const warned = new Set<string>();
-  const allowedLocal = new Set(
-    (policy.allowedOrigins ?? []).map((origin) => destinationKeyOf(origin)).filter((key) => key !== null)
-  );
+  const allowedLocal = new Set((policy.allowedOrigins ?? []).flatMap((origin) => destinationKeysOf(origin)));
 
   // One answer per host for the whole audit. A page asks for the same hosts
   // over and over, and a lookup per request would slow down the very loads a
