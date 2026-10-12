@@ -1207,16 +1207,20 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
 
     const where = dest.class === "loopback" ? "this machine" : "a private network";
-    // The same port on this machine under another spelling is open: say why
-    // that does not count, rather than that nothing is open.
-    const sibling =
-      dest.class === "loopback" ? [...vouched].find((candidate) => sameLocalPort(candidate, parsed)) : undefined;
-    if (sibling) {
-      throw new AuditError(
-        `Refusing to audit ${origin}: ${sibling} is open in a connected tab, but a loopback address or ` +
-          `*.localhost name vouches for itself alone, since a service bound to one may not be the one ` +
-          `another reaches. Audit ${sibling} instead, or allow ${origin} with --audit-allow-origin.`
-      );
+    // The same port on this machine under another spelling is vouched for:
+    // say why that does not count, rather than that nothing is open.
+    if (dest.class === "loopback") {
+      const isSibling = (candidate: string) => sameLocalPort(candidate, parsed);
+      const open = [...openOrigins()].find(isSibling);
+      const sibling = open ?? [...configuredAuditOrigins].find(isSibling);
+      if (sibling) {
+        throw new AuditError(
+          `Refusing to audit ${origin}: ${sibling} is ${open ? "open in a connected tab" : "allowlisted"}, ` +
+            `but a loopback address or *.localhost name vouches for itself alone, since a service bound to ` +
+            `one may not be the one another reaches. Audit ${sibling} instead, or allow ${origin} with ` +
+            `--audit-allow-origin.`
+        );
+      }
     }
     if (vouchesFor(openOrigins(), parsed)) {
       throw new AuditError(

@@ -669,9 +669,11 @@ describe("audit destination policy", () => {
       // proxy treats it: localhost:4000 covers 127.0.0.1:4000 and [::1]:4000.
       expect((await post("http://127.0.0.1:4000/")).status).toBe(200);
       expect((await post("http://[::1]:4000/")).status).toBe(200);
-      // An address covers only itself.
+      // An address covers only itself, and the refusal says where the sibling came from.
       expect((await post("http://[::1]:5000/")).status).toBe(422);
-      expect((await post("http://localhost:5000/")).status).toBe(422);
+      const sibling = await post("http://localhost:5000/");
+      expect(sibling.status).toBe(422);
+      expect(sibling.body.error).toMatch(/http:\/\/127\.0\.0\.1:5000 is allowlisted, but/);
       // Different port, scheme or host: not the allowlisted origin.
       expect((await post("http://localhost:4001/")).status).toBe(422);
       expect((await post("https://localhost:4000/")).status).toBe(422);
