@@ -16,6 +16,10 @@ export interface CliOptions {
   standalone: boolean;
   /** Print every captured entry as it arrives. */
   verbose: boolean;
+  /** Loopback/private origins audits may target or load without an open tab. */
+  auditAllowedOrigins?: string[];
+  /** Let audits reach any loopback/private address but the audits' own ports (not recommended). */
+  auditAllowPrivateNetwork: boolean;
 }
 
 export function readPackageVersion(): string {
@@ -55,6 +59,12 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     redact: env["BROWSER_TOOLS_REDACT"] !== "false",
     standalone: false,
     verbose: env["BROWSER_TOOLS_VERBOSE"] === "true" || env["BROWSER_TOOLS_VERBOSE"] === "1",
+    auditAllowPrivateNetwork:
+      env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "true" ||
+      env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "1",
+    ...(splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"])
+      ? { auditAllowedOrigins: splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"]) }
+      : {}),
     ...(numberOrUndefined(env["BROWSER_TOOLS_PORT"]) !== undefined
       ? { port: numberOrUndefined(env["BROWSER_TOOLS_PORT"]) }
       : {}),
@@ -69,6 +79,11 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     ...(splitList(env["BROWSER_TOOLS_EXCLUDE_TOOLS"])
       ? { disabledTools: splitList(env["BROWSER_TOOLS_EXCLUDE_TOOLS"]) }
       : {}),
+  };
+
+  // Both spellings of the flag, and the variable, add to the same list.
+  const addAuditOrigins = (value: string | undefined) => {
+    options.auditAllowedOrigins = [...(options.auditAllowedOrigins ?? []), ...(splitList(value) ?? [])];
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -96,6 +111,12 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         break;
       case "--verbose":
         options.verbose = true;
+        break;
+      case "--audit-allow-origin":
+        addAuditOrigins(next());
+        break;
+      case "--audit-allow-private-network":
+        options.auditAllowPrivateNetwork = true;
         break;
       case "--port":
         options.port = numberOrUndefined(next());
@@ -126,6 +147,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         else if (arg.startsWith("--connect=")) options.connectUrl = arg.slice(10);
         else if (arg.startsWith("--token=")) options.token = arg.slice(8);
         else if (arg.startsWith("--screenshot-dir=")) options.screenshotDir = arg.slice(17);
+        else if (arg.startsWith("--audit-allow-origin=")) addAuditOrigins(arg.slice(21));
         break;
     }
   }
@@ -156,12 +178,20 @@ Options:
       --token <t>          Auth token to use with --connect
       --verbose            Print each captured console and network entry as it arrives
       --no-redact          Do not scrub credentials from captured data (not recommended)
+      --audit-allow-origin <o,o>
+                           Loopback/private origins (e.g. http://localhost:3000) that audits
+                           may target or load even when no tab is open on them
+      --audit-allow-private-network
+                           Let audits reach any loopback or private address, except the
+                           audits' own ports (not recommended). Also needed behind a
+                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)
 
 Environment:
   BROWSER_TOOLS_PORT, BROWSER_TOOLS_HOST, BROWSER_TOOLS_SCREENSHOT_DIR,
   BROWSER_TOOLS_TOOLS, BROWSER_TOOLS_EXCLUDE_TOOLS, BROWSER_TOOLS_TOKEN,
   BROWSER_TOOLS_STATE_DIR, BROWSER_TOOLS_LOG_LEVEL, BROWSER_TOOLS_REDACT,
-  BROWSER_TOOLS_VERBOSE
+  BROWSER_TOOLS_VERBOSE, BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS,
+  BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK
 
 Available tools:
   ${ALL_TOOL_NAMES.join(", ")}

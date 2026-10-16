@@ -34,7 +34,15 @@ async function main(): Promise<void> {
         `      --host <addr>        Loopback address to bind (default 127.0.0.1)\n` +
         `      --screenshot-dir <p> Where screenshots are written\n` +
         `      --verbose            Print each captured entry as it arrives\n` +
-        `      --no-redact          Do not scrub credentials from captured data\n`
+        `      --no-redact          Do not scrub credentials from captured data\n` +
+        `      --audit-allow-origin <o,o>\n` +
+        `                           Loopback/private origins (e.g. http://localhost:3000) that audits\n` +
+        `                           may target or load even when no tab is open on them\n` +
+        `      --audit-allow-private-network\n` +
+        `                           Let audits reach any loopback or private address, except the\n` +
+        `                           audits' own ports (not recommended). Also needed behind a\n` +
+        `                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)\n\n` +
+        `Audit settings apply to every MCP client that attaches to this connector.\n`
     );
     return;
   }
@@ -46,6 +54,8 @@ async function main(): Promise<void> {
     ...(options.token ? { token: options.token } : {}),
     redact: options.redact,
     verbose: options.verbose,
+    ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
+    auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
   });
 
   writeSessionFile({

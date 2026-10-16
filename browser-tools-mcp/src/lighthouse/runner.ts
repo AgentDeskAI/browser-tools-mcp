@@ -1,6 +1,8 @@
 import { createLogger } from "../util/logger.js";
 import { extractAuditReport } from "./extract.js";
 import { describeLaunchFailure, findAuditBrowser, NoBrowserError, type FoundBrowser } from "./find-browser.js";
+import { resolveDestination, type Lookup } from "./destination.js";
+import { AUDIT_BROWSER_PREFS, proxyChromeFlags, startEgressProxy, type EgressProxy } from "./egress-proxy.js";
 import type { AuditCategory, AuditReport, LighthouseResultLike } from "./types.js";
 
 const log = createLogger("lighthouse");
@@ -16,6 +18,25 @@ export interface AuditOptions {
   /** "desktop" (default) or "mobile". */
   device?: "desktop" | "mobile";
   timeoutMs?: number;
+  /**
+   * Where the audit browser may go, decided by the caller. Blocked addresses
+   * (link-local, metadata, multicast, reserved) are always refused. Loopback
+   * and private addresses are refused except for the origins in
+   * `allowedOrigins`, or all of them when `allowPrivate` is true; `{}` allows
+   * nothing local.
+   *
+   * Required, and used exactly as given. The runner looks the audited host up
+   * again, and that answer must never widen the decision: a rebinding name can
+   * answer "public" to the connector, which then allows nothing local, and
+   * "loopback" a moment later to the runner.
+   */
+  egress: {
+    allowPrivate?: boolean;
+    allowedOrigins?: string[];
+    /** Local ports never reached whatever the policy: the connector's own, besides the audit's. */
+    refusePorts?: number[];
+    lookup?: Lookup;
+  };
 }
 
 export class AuditError extends Error {
@@ -101,8 +122,60 @@ export function assertAuditableUrl(url: string): URL {
       `Cannot audit ${parsed.protocol} URLs — navigate to an http(s) page first.`
     );
   }
+  if (parsed.username || parsed.password) {
+    throw new AuditError("Cannot audit a URL that embeds credentials.");
+  }
   return parsed;
 }
+
+/**
+ * Why a page that never loaded may have failed. The proxy cannot tell the
+ * document's request from the page's subresources or the browser's own
+ * background traffic, so this names everything refused rather than guessing
+ * which one mattered. Names that did not resolve are told apart from
+ * destinations the policy forbids: they may well load next time.
+ */
+export function describeRefusals(
+  refused: EgressProxy["refused"],
+  lighthouseMessage: string | undefined
+): string {
+  const list = (labels: string[]) =>
+    labels.slice(0, 10).join(", ") + (labels.length > 10 ? ` and ${labels.length - 10} more` : "");
+  const label = (r: EgressProxy["refused"][number]) => (r.class === "blocked" ? r.host : `${r.host}:${r.port}`);
+  const forbidden = [...new Set(refused.filter((r) => !r.unresolved && r.class !== "fake-ip").map(label))];
+  const fakeIp = [...new Set(refused.filter((r) => r.class === "fake-ip").map((r) => r.host))];
+  const unresolved = [...new Set(refused.filter((r) => r.unresolved).map((r) => r.host))];
+  return [
+    "The audited page did not load.",
+    ...(forbidden.length
+      ? [`This audit tried to reach ${list(forbidden)}, which audits are not allowed to load.`]
+      : []),
+    ...(fakeIp.length
+      ? [
+          `${list(fakeIp)} resolved to 198.18.0.0/15, the range a fake-IP proxy (Clash, sing-box, Surge in ` +
+            `fake-ip mode) answers every name with, so where it really goes cannot be checked. Turn fake-ip ` +
+            `mode off while auditing, or start the connector with --audit-allow-private-network.`,
+        ]
+      : []),
+    ...(unresolved.length
+      ? [`Could not resolve ${list(unresolved)}: check the url, or try again if the network was briefly down.`]
+      : []),
+    ...(lighthouseMessage ? [`(Lighthouse: ${lighthouseMessage})`] : []),
+  ].join(" ");
+}
+
+/**
+ * Lighthouse runtime errors that mean the page itself never loaded. Only
+ * these are reported with the refused requests (see `describeRefusals`); a
+ * page that loaded and then failed some other way keeps Lighthouse's own
+ * explanation.
+ */
+const DOCUMENT_LOAD_FAILURES = new Set([
+  "NO_DOCUMENT_REQUEST",
+  "FAILED_DOCUMENT_REQUEST",
+  "ERRORED_DOCUMENT_REQUEST",
+  "CHROME_INTERSTITIAL_ERROR",
+]);
 
 const CHROME_FLAGS = [
   "--headless=new",
@@ -124,12 +197,35 @@ export async function runLighthouseAudit(
   hooks: AuditHooks = {}
 ): Promise<AuditReport> {
   const { category, device = "desktop", timeoutMs = 60_000 } = options;
-  const url = assertAuditableUrl(options.url).toString();
+  const parsed = assertAuditableUrl(options.url);
+  const url = parsed.toString();
+
+  // Fails fast, before a browser starts, saying which of the two it is.
+  const top = await resolveDestination(parsed.hostname, options.egress.lookup);
+  if (top.unresolved) {
+    throw new AuditError(
+      `Cannot audit ${parsed.hostname}: the name does not resolve. Check the url, or try again if the ` +
+        `network was briefly down.`
+    );
+  }
+  if (top.class === "blocked") {
+    throw new AuditError(
+      `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata or reserved address.`
+    );
+  }
 
   let chrome: { port: number; kill: () => Promise<void> } | undefined;
   let chosen: FoundBrowser | undefined;
+  let proxy: EgressProxy | undefined;
 
   try {
+    proxy = await startEgressProxy({
+      allowPrivate: options.egress.allowPrivate ?? false,
+      allowedOrigins: options.egress.allowedOrigins ?? [],
+      refusePorts: options.egress.refusePorts ?? [],
+      ...(options.egress.lookup ? { lookup: options.egress.lookup } : {}),
+    });
+
     const [chromeLauncher, lighthouseModule] = await Promise.all([
       import("chrome-launcher"),
       import("lighthouse"),
@@ -145,9 +241,13 @@ export async function runLighthouseAudit(
     log.debug(`Running the audit in ${browser.name} (${browser.source})`);
 
     chrome = (await chromeLauncher.launch({
-      chromeFlags: CHROME_FLAGS,
+      chromeFlags: [...CHROME_FLAGS, ...proxyChromeFlags(proxy.port)],
       chromePath: browser.path,
+      prefs: AUDIT_BROWSER_PREFS,
     })) as unknown as { port: number; kill: () => Promise<void> };
+    // The audit browser's own DevTools port is the audit's machinery, not a
+    // page, whatever the policy allows.
+    proxy.refusePort(chrome.port);
 
     const flags = await buildLighthouseFlags({ category, device, port: chrome.port, timeoutMs });
 
@@ -159,6 +259,10 @@ export async function runLighthouseAudit(
 
     const lhr = result?.lhr;
     if (!lhr) throw new AuditError("Lighthouse returned no result");
+    const runtimeError = (lhr as { runtimeError?: { code?: string; message?: string } }).runtimeError;
+    if (runtimeError && DOCUMENT_LOAD_FAILURES.has(runtimeError.code ?? "") && proxy.refused.length > 0) {
+      throw new AuditError(describeRefusals(proxy.refused, runtimeError.message));
+    }
 
     hooks.onRawResult?.(lhr);
     return extractAuditReport(lhr, url, category, device);
@@ -191,6 +295,7 @@ export async function runLighthouseAudit(
         log.warn("Could not shut down the audit Chrome instance:", error);
       }
     }
+    await proxy?.close();
   }
 }
 

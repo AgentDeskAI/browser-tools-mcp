@@ -1,5 +1,93 @@
 # Changelog
 
+## 2.0.3 — Security
+
+Fixes a server-side request forgery in the four Lighthouse audit tools
+(`runAccessibilityAudit`, `runPerformanceAudit`, `runSEOAudit`,
+`runBestPracticesAudit`), CWE-918, present in 2.0.0 through 2.0.2.
+Advisory: GHSA-fm7v-38h4-4q7w.
+
+The tools accept a `url` and audited it in a headless Chrome on the user's
+machine after checking only that the scheme was http or https. A caller — in
+practice a model acting on prompt-injected page content — could point that
+browser at loopback services, the LAN or a cloud metadata endpoint, and the
+stored report (`browser-tools://audit/{reportId}`) handed the rendered page
+back as its `final-screenshot`.
+
+- **Audits no longer reach link-local, cloud metadata, or unvouched loopback
+  and private addresses.** Link-local and metadata addresses (169.254.0.0/16,
+  `metadata.google.internal`, AWS IMDS over IPv6, Alibaba, and the rest) are
+  never audited, in any spelling (Azure's WireServer at 168.63.129.16, which
+  sits in public address space, included): IPv4-mapped, IPv4-compatible and
+  IPv4-translated IPv6, NAT64, 6to4, decimal, hex and octal forms are all
+  classified the same way. Every address on this machine's own network
+  interfaces counts as this machine, so a service bound to `0.0.0.0` or `::`
+  is not reachable through the machine's LAN or global IPv6 address either.
+  Pages on localhost or a private network are audited only while that origin
+  is open in a connected tab (the normal dev-server flow keeps working), or
+  when allowlisted. A tab vouches only for
+  a local name — an IP address, `localhost`, a single-label name, or a name
+  under `.test`, `.local`, `.internal`, `.lan`, `.home.arpa` and the like — so
+  a public site the user has open cannot rebind its own name to a LAN address
+  and have that audited. A public name that points at a local address on
+  purpose (`lvh.me`, `nip.io`) needs `--audit-allow-origin`.
+- **Every request the audit browser makes is checked as it happens.** The
+  browser runs behind an in-process proxy that resolves and classifies each
+  request — redirects, iframes, fetches and websockets included — and
+  connects to the address it vetted, so a public page cannot redirect or frame
+  its way inside, and a rebinding name cannot change address after the check.
+  Lookups fail closed. WebRTC is kept off direct UDP, so it cannot go around
+  the proxy either.
+- **A local page reaches only the local origins vouched for.** Auditing
+  `http://localhost:3000` lets that page load `localhost:3000` (and
+  `127.0.0.1:3000` or `[::1]:3000`, either of which the name may reach) and
+  the other origins open in a tab or allowlisted, not every loopback and
+  private address, so a dev server's open redirect cannot carry the audit to
+  another service. An address, or a `*.localhost` name, vouches for itself
+  alone: a service bound only to `[::1]:3000` is not the one on
+  `127.0.0.1:3000`, and a Host-routing proxy serves another site under each
+  name. A page whose API runs on another local port loads it once that port
+  is open in a tab or passed to `--audit-allow-origin`. A public page loads
+  nothing local.
+- **Fake-IP answers are refused.** Behind a fake-IP proxy (Clash, mihomo,
+  sing-box or Surge in fake-ip mode) every name resolves to 198.18.0.0/15 and
+  the proxy picks the real address later, so where a name goes cannot be
+  checked, and loopback or LAN services would be reachable by name. Audits
+  refuse such answers, for the audited page and everything it loads, and the
+  error names the way out: turn fake-ip mode off while auditing, or pass
+  `--audit-allow-private-network`, which gives up checking local reach (see
+  SECURITY.md). No tab or `--audit-allow-origin` entry opens the range.
+- New flags `--audit-allow-origin <o,o>` and `--audit-allow-private-network`
+  (environment: `BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS`,
+  `BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK`) for audits of local pages that
+  are not open in a tab. Even with private access allowed, link-local and
+  metadata addresses stay blocked, and so do the connector's own port and
+  the DevTools and checking-proxy ports of every running audit, under any
+  name. They apply to the process
+  that starts the connector (`browser-tools-connector --help` lists them); one
+  that attaches to a running connector warns that they are ignored.
+- URLs with embedded credentials are rejected.
+- Audits now connect directly rather than through a system, PAC or
+  `HTTP(S)_PROXY` proxy. Handing requests to an outside proxy would let it
+  resolve names and reach addresses the audit policy never checked. On a
+  network where direct connections are blocked, audits of public sites fail.
+- `@agentdeskai/browser-tools-server` is affected through its dependency and
+  now requires `@agentdeskai/browser-tools-mcp` `^2.0.3`.
+
+If you cannot upgrade: exclude the audit tools with
+`--exclude runAccessibilityAudit,runPerformanceAudit,runSEOAudit,runBestPracticesAudit`,
+and do not run the server on a host with an IMDSv1 metadata service.
+
+The session file written by the embedded connector reported version 2.0.0
+regardless of the installed version; it now reports the real one. An audit
+requested with a `tabId` could audit another tab: through a shared connector
+the `tabId` was dropped, and a tab that had not reported its page yet fell back
+to the current one. It now audits the named tab, or says it cannot yet. An
+audit with no `tabId` took the page of whichever tab last reported while
+current, even after another tab was selected; it now audits the current tab.
+
+Thanks to @beardthelion for reporting.
+
 ## 2.0.2
 
 Five defects, all found by writing the 2.1 capability specifications rather

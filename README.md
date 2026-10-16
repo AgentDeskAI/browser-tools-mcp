@@ -177,6 +177,18 @@ This tool captures whatever your browser sees, so it treats that data carefully:
   unless explicitly requested.
 - **Cookie access is an optional permission** you grant from the panel, not
   something the extension holds by default.
+- **Audits stay off your internal network.** An audit accepts a url, and the
+  caller may be a model reading untrusted pages. Link-local and cloud metadata
+  addresses are never audited. Pages on localhost or a private network are
+  audited only while open in a connected tab (or allowlisted with
+  `--audit-allow-origin`), and every request the audit browser makes —
+  redirects and subresources included — is checked again as it happens. A
+  local page may load only the local origins that are open in a tab or
+  allowlisted, so if your app calls an API on another local port, open that
+  too or allowlist it. Audits connect directly, not through a system proxy.
+  Behind a fake-IP proxy (Clash, sing-box, Surge), which hides where names
+  really go, audits are refused unless you pass
+  `--audit-allow-private-network`; see SECURITY.md.
 
 Report vulnerabilities per [SECURITY.md](SECURITY.md).
 
@@ -196,6 +208,8 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | `--connect <url>` | Attach to a connector already running elsewhere |
 | `--token <t>` | Auth token to use with `--connect` |
 | `--no-redact` | Disable credential scrubbing (not recommended) |
+| `--audit-allow-origin <o,o>` | Loopback/private origins audits may target or load without an open tab |
+| `--audit-allow-private-network` | Let audits reach any loopback/private address except the audit's own ports (not recommended); also needed behind a fake-IP proxy |
 
 To share one browser session between several MCP clients, start the connector
 once with `npx @agentdeskai/browser-tools-server` and every client will attach to

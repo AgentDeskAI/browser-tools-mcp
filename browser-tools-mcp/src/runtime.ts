@@ -6,7 +6,7 @@ import {
 } from "./mcp/client.js";
 import { readSessionFile, writeSessionFile, clearSessionFile } from "./util/session.js";
 import { createLogger } from "./util/logger.js";
-import type { CliOptions } from "./cli.js";
+import { readPackageVersion, type CliOptions } from "./cli.js";
 
 const log = createLogger("runtime");
 
@@ -113,7 +113,23 @@ async function probe(baseUrl: string, timeoutMs = 400): Promise<boolean> {
  * second process was the single largest source of support load in 1.x.
  */
 export async function createRuntime(options: CliOptions): Promise<Runtime> {
+  // Audit policy belongs to the connector, so attaching leaves it as the
+  // process that started the connector set it. Fails closed, but say so: the
+  // refusal message tells the user to pass the very flag they passed. The
+  // values may well match the connector's (an environment variable both
+  // processes read), so this says where they count, not that they are wrong.
+  const warnAuditFlagsIgnored = (where: string) => {
+    if (options.auditAllowedOrigins?.length || options.auditAllowPrivateNetwork) {
+      log.warn(
+        `--audit-allow-origin and --audit-allow-private-network (or their BROWSER_TOOLS_AUDIT_* ` +
+          `variables) take effect only in the process that starts the connector. This process is ` +
+          `attaching to ${where}, which keeps the audit settings it was started with.`
+      );
+    }
+  };
+
   if (options.connectUrl) {
+    warnAuditFlagsIgnored(`the connector at ${options.connectUrl}`);
     const token = options.token ?? readSessionFile()?.token ?? "";
     if (!token) {
       throw new Error("--connect requires --token (or a readable session file)");
@@ -131,6 +147,7 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
   const existing = readSessionFile();
   if (existing && (await probe(`http://127.0.0.1:${existing.port}`))) {
     log.info(`Attaching to the connector already running on port ${existing.port}`);
+    warnAuditFlagsIgnored(`the connector already running on port ${existing.port}`);
     return {
       client: new HttpConnectorClient({
         baseUrl: `http://127.0.0.1:${existing.port}`,
@@ -152,6 +169,8 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       ...(options.token ? { token: options.token } : {}),
       redact: options.redact,
       verbose: options.verbose,
+      ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
+      auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
     });
 
     writeSessionFile({
@@ -159,7 +178,8 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       token: connector.token,
       pid: process.pid,
       startedAt: new Date().toISOString(),
-      version: "2.0.0",
+      // Was a literal that 2.0.1 and 2.0.2 never updated; connector-bin already reads the real one.
+      version: readPackageVersion(),
     });
 
     return {

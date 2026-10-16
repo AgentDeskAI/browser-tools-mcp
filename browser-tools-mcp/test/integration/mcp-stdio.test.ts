@@ -195,6 +195,16 @@ describe("command line interface", () => {
     expect(out).toContain("--port");
   });
 
+  it("lists the audit flags in the help of both binaries", () => {
+    // The connector-bin one matters most: a client that attaches is told to
+    // pass these flags to the process that starts the connector.
+    for (const bin of [entry, path.join(packageDir, "dist", "connector-bin.js")]) {
+      const out = execFileSync(process.execPath, [bin, "--help"], { encoding: "utf8" });
+      expect(out, bin).toContain("--audit-allow-origin");
+      expect(out, bin).toContain("--audit-allow-private-network");
+    }
+  });
+
   it("reports its configuration with --doctor", () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-state-"));
     const result = spawnSync(process.execPath, [entry, "--doctor"], {

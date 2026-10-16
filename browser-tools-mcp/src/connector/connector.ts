@@ -30,7 +30,21 @@ import {
   parseImageDataUrl,
   withExtension,
 } from "../util/image.js";
-import { AuditError, runLighthouseAudit, type AuditHooks } from "../lighthouse/runner.js";
+import {
+  AuditError,
+  assertAuditableUrl,
+  runLighthouseAudit,
+  type AuditHooks,
+  type AuditOptions,
+} from "../lighthouse/runner.js";
+import {
+  isLocalName,
+  namesThisMachine,
+  originOf,
+  resolveDestination,
+  vouchKeyOf,
+  vouchKeysOf,
+} from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
@@ -89,11 +103,27 @@ export interface ConnectorConfig {
    * on a busy page it is a lot of output.
    */
   verbose?: boolean;
+  /**
+   * Extra origins (scheme://host:port) on loopback or a private network that
+   * audits may target, and audited local pages may load, even when no
+   * connected tab is on them.
+   */
+  auditAllowedOrigins?: string[];
+  /**
+   * Let audits reach any loopback or private address. Off by default: with it
+   * on, anything that can call an audit tool can make the audit browser read
+   * internal services. Link-local and metadata addresses stay blocked. Also
+   * the only way to audit behind a fake-IP proxy, whose 198.18.0.0/15 answers
+   * are refused otherwise.
+   */
+  auditAllowPrivateNetwork?: boolean;
   /** Injectable so audits can be exercised without launching a browser. */
   auditRunner?: (
-    options: { url: string; category: AuditCategory },
+    options: { url: string; category: AuditCategory; egress: AuditOptions["egress"] },
     hooks?: AuditHooks
   ) => Promise<AuditReport>;
+  /** Injectable DNS for tests of the audit destination policy. */
+  auditLookup?: (host: string) => Promise<string[]>;
 }
 
 export interface TabView {
@@ -177,6 +207,8 @@ interface ExtensionConnection {
   missedPings: number;
   lastSeen: number;
   tabId: number | string | null;
+  /** The page an extension that never named its tab last reported. */
+  pageUrl?: string;
 }
 
 interface PendingRequest {
@@ -440,7 +472,13 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
     try {
       const url = typeof req.body?.url === "string" ? req.body.url : undefined;
-      res.json(await runAudit(category, url ? { url } : {}));
+      const tabId = req.body?.tabId;
+      res.json(
+        await runAudit(category, {
+          ...(url ? { url } : {}),
+          ...(typeof tabId === "number" || typeof tabId === "string" ? { tabId } : {}),
+        })
+      );
     } catch (error) {
       respondWithError(res, error);
     }
@@ -594,6 +632,14 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
     const existing = tabs.get(key);
     if (existing) {
+      // A new socket for a known tab (the old one went quiet and the
+      // extension reconnected before the heartbeat dropped it) has not said
+      // where the tab is now. Whatever the old socket reported is stale: the
+      // tab may have moved to a chrome:// or error page meanwhile, which
+      // reports nothing on reconnect, and must not keep vouching for the
+      // page it left (see `openOrigins`). The new socket reports its page
+      // right after hello.
+      if (existing.connectionId !== connection.id) existing.url = "";
       existing.connectionId = connection.id;
       existing.lastActivityAt = Date.now();
     } else {
@@ -833,7 +879,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "page": {
         const url = typeof message["url"] === "string" ? (message["url"] as string) : "";
         const record = connection.tabId !== null ? tabs.get(String(connection.tabId)) : undefined;
-        if (record && url) {
+        // A report without a url replaces the old page too, rather than
+        // leaving it vouched for (see `openOrigins`) after the tab has left.
+        if (record) {
           record.url = url;
           record.lastActivityAt = Date.now();
         }
@@ -843,6 +891,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           store.setCurrentPage({ url, tabId: connection.tabId });
         } else if (!record) {
           store.setCurrentPage({ url, tabId: message["tabId"] });
+          if (connection.tabId === null) connection.pageUrl = url || undefined;
         }
         break;
       }
@@ -982,14 +1031,27 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     category: AuditCategory,
     options: { url?: string; tabId?: TabId } = {}
   ): Promise<AuditReport> {
-    const named = options.tabId !== undefined ? resolveTabId(options.tabId) : null;
-    const namedUrl = named !== null ? tabs.get(String(named))?.url : undefined;
-    const url = options.url || namedUrl || store.getCurrentPage().url;
+    // The named tab's page, else the current tab's: that tab's own, never
+    // whatever page the store saw last, which follows page reports rather
+    // than tab selection and may be another tab's. The store's page is only
+    // for an extension that never names its tab.
+    const tabId = resolveTabId(options.tabId);
+    let url = options.url;
+    if (!url && tabId !== null) {
+      url = tabs.get(String(tabId))?.url;
+      if (!url) {
+        throw new AuditError(
+          `Tab ${tabId} has not reported its page yet. Wait for it to load, or pass a url explicitly.`
+        );
+      }
+    }
+    url ||= store.getCurrentPage().url;
     if (!url) {
       throw new AuditError(
         "No page URL is known yet. Open the page in Chrome with DevTools open, or pass a url explicitly."
       );
     }
+    const egress = await checkAuditTarget(url);
     const runner = config.auditRunner ?? runLighthouseAudit;
 
     // The condensed report is what an agent reads; the unabridged Lighthouse
@@ -1009,8 +1071,170 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       },
     };
 
-    const report = await runner({ url, category }, hooks);
+    // The connector's own port is the audit's machinery too: its identity
+    // route needs no token, and nothing a page loads has business there.
+    const report = await runner(
+      {
+        url,
+        category,
+        egress: {
+          ...egress,
+          refusePorts: [actualPortHolder.value],
+          ...(config.auditLookup ? { lookup: config.auditLookup } : {}),
+        },
+      },
+      hooks
+    );
     return reportId ? { ...report, reportId } : report;
+  }
+
+  /**
+   * Origins from --audit-allow-origin, normalised once. "localhost:3000" is
+   * accepted as http://localhost:3000 — written as a URL it would parse as a
+   * "localhost:" scheme and be ignored without a word, which would read as the
+   * flag not working. Anything else unparseable is reported, not dropped.
+   */
+  const configuredAuditOrigins = new Set<string>();
+  for (const raw of config.auditAllowedOrigins ?? []) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    const origin = originOf(/^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `http://${entry}`);
+    if (origin) configuredAuditOrigins.add(origin);
+    else log.warn(`Ignoring audit-allow-origin ${JSON.stringify(raw)}: not an http(s) origin`);
+  }
+
+  /** Origins of the pages open in a connected tab right now. */
+  function openOrigins(): Set<string> {
+    const origins = new Set<string>();
+    for (const record of tabs.values()) {
+      const origin = record.url ? originOf(record.url) : null;
+      if (origin) origins.add(origin);
+    }
+    // An extension that never names its tab reports its page with no tab to
+    // file it under, so that page is kept on the socket that reported it and
+    // counts while the socket is open. The store's current page is not used:
+    // nothing clears it, so it would keep vouching for a page long closed.
+    for (const connection of connections.values()) {
+      const origin = connection.tabId === null && connection.pageUrl ? originOf(connection.pageUrl) : null;
+      if (origin) origins.add(origin);
+    }
+    return origins;
+  }
+
+  /**
+   * Whether one of these origins vouches for the url: by the host and port
+   * keys the egress proxy matches (`vouchKeysOf`), and the scheme. A tab on
+   * localhost:3000 vouches for an audit of 127.0.0.1:3000 or [::1]:3000, as
+   * it already lets the page load them; a tab on one address vouches for that
+   * address alone.
+   */
+  function vouchesFor(origins: Set<string>, url: URL): boolean {
+    const key = vouchKeyOf(url);
+    return key !== null && [...origins].some((origin) => vouchKeysOf(origin).includes(key));
+  }
+
+  /** Whether a vouched origin is this machine's same port and scheme as the url, under another spelling. */
+  function sameLocalPort(origin: string, url: URL): boolean {
+    const candidate = originOf(origin);
+    const target = originOf(url);
+    if (!candidate || !target || candidate === target) return false;
+    const a = new URL(candidate);
+    const b = new URL(target);
+    return a.protocol === b.protocol && a.port === b.port && namesThisMachine(a.hostname);
+  }
+
+  /**
+   * Loopback and private origins an audit may load: the configured ones, and
+   * the ones open in a connected tab under a local name. A tab on a public
+   * name vouches for nothing private (see `isLocalName`).
+   */
+  function vouchedOrigins(): Set<string> {
+    const origins = new Set<string>(configuredAuditOrigins);
+    for (const origin of openOrigins()) {
+      if (isLocalName(new URL(origin).hostname)) origins.add(origin);
+    }
+    return origins;
+  }
+
+  /**
+   * Decides whether an audit may target this url, before any browser starts.
+   *
+   * Audits accept a url from the MCP client, and the client may be a model
+   * acting on prompt-injected page content. Public sites are fine to audit.
+   * Loopback and private-network pages are allowed only when they are already
+   * open in a connected tab — the user went there, and the extension already
+   * captures that page — or are explicitly allowlisted. Link-local and cloud
+   * metadata addresses are never allowed.
+   *
+   * The answer also says what the page may load. A public page loads nothing
+   * local. A local page loads the vouched origins and no other local ones, so
+   * an open redirect or a framed page cannot carry the audit further inside.
+   */
+  async function checkAuditTarget(
+    url: string
+  ): Promise<{ allowPrivate: boolean; allowedOrigins: string[] }> {
+    const parsed = assertAuditableUrl(url);
+    const dest = await resolveDestination(parsed.hostname, config.auditLookup);
+    if (dest.unresolved) {
+      throw new AuditError(
+        `Cannot audit ${parsed.hostname}: the name does not resolve. Check the url, or try again if ` +
+          `the network was briefly down.`
+      );
+    }
+    if (dest.class === "blocked") {
+      throw new AuditError(
+        `Refusing to audit ${parsed.hostname}: it resolves to a link-local, cloud metadata or reserved ` +
+          `address.`
+      );
+    }
+    if (config.auditAllowPrivateNetwork) return { allowPrivate: true, allowedOrigins: [] };
+    if (dest.class === "public") return { allowPrivate: false, allowedOrigins: [] };
+    // A fake-ip address stands for whatever the proxy behind it decides, so no
+    // tab or allowlist entry can vouch for it (see `destination.ts`).
+    if (dest.class === "fake-ip") {
+      throw new AuditError(
+        `Refusing to audit ${parsed.hostname}: it resolves to 198.18.0.0/15, the range a fake-IP proxy ` +
+          `(Clash, sing-box, Surge in fake-ip mode) answers every name with, so where it really goes cannot ` +
+          `be checked. Turn fake-ip mode off while auditing, or start the connector with ` +
+          `--audit-allow-private-network.`
+      );
+    }
+
+    const origin = originOf(parsed)!;
+    const vouched = vouchedOrigins();
+    if (vouchesFor(vouched, parsed)) {
+      return { allowPrivate: false, allowedOrigins: [...new Set([...vouched, origin])] };
+    }
+
+    const where = dest.class === "loopback" ? "this machine" : "a private network";
+    // The same port on this machine under another spelling is vouched for:
+    // say why that does not count, rather than that nothing is open.
+    if (dest.class === "loopback") {
+      const isSibling = (candidate: string) => sameLocalPort(candidate, parsed);
+      const open = [...openOrigins()].find(isSibling);
+      const sibling = open ?? [...configuredAuditOrigins].find(isSibling);
+      if (sibling) {
+        throw new AuditError(
+          `Refusing to audit ${origin}: ${sibling} is ${open ? "open in a connected tab" : "allowlisted"}, ` +
+            `but a loopback address or *.localhost name vouches for itself alone, since a service bound to ` +
+            `one may not be the one another reaches. Audit ${sibling} instead, or allow ${origin} with ` +
+            `--audit-allow-origin.`
+        );
+      }
+    }
+    if (vouchesFor(openOrigins(), parsed)) {
+      throw new AuditError(
+        `Refusing to audit ${origin}: ${parsed.hostname} is a public DNS name that points at ${where}. ` +
+          `An open tab only vouches for local names (IP addresses, localhost, .test, .local and the ` +
+          `like), because whoever runs a public name can point it anywhere. If it is yours, allow it ` +
+          `with --audit-allow-origin.`
+      );
+    }
+    throw new AuditError(
+      `Refusing to audit ${origin}: it is on ${where} and is not open in a connected browser tab. ` +
+        `Open it in Chrome with DevTools open and audit it from there, or allow it with ` +
+        `--audit-allow-origin.`
+    );
   }
 
   function broadcast(message: unknown): void {

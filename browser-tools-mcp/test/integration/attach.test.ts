@@ -37,6 +37,8 @@ beforeEach(async () => {
     port: 0,
     screenshotDir,
     requestTimeoutMs: 3_000,
+    // Hermetic: audit targets are resolved before the runner is called.
+    auditLookup: async () => ["93.184.215.14"],
     auditRunner: async ({ url, category }) => ({
       category,
       metadata: { url, timestamp: "2026-07-30T00:00:00.000Z", device: "desktop", lighthouseVersion: "13.4.1" },
@@ -181,6 +183,77 @@ describe("HttpConnectorClient against a live connector", () => {
     expect(report.issues[0]!.id).toBe("meta-description");
   });
 
+  it("audits the named tab over HTTP, not the current one", async () => {
+    // The route used to drop tabId, so an attached client asking for one tab
+    // got the current page audited instead.
+    const first = new FakeExtension({ port: connector.port, tabId: 1 });
+    const second = new FakeExtension({ port: connector.port, tabId: 2 });
+    try {
+      for (const [ext, tabId, url] of [
+        [first, 1, "https://one.example/"],
+        [second, 2, "https://two.example/"],
+      ] as const) {
+        await ext.connect();
+        await ext.waitForWelcome();
+        ext.send({ type: "page", url, tabId });
+      }
+      const urls = () => connector.listTabs().map((t) => t.url).sort();
+      await vi.waitFor(() => expect(urls()).toEqual(["https://one.example/", "https://two.example/"]));
+
+      const client = makeClient();
+      expect((await client.audit("seo", { tabId: 2 })).metadata.url).toBe("https://two.example/");
+      expect((await client.audit("seo", { tabId: 1 })).metadata.url).toBe("https://one.example/");
+      await expect(client.audit("seo", { tabId: 99 })).rejects.toThrow(/Unknown tab 99/);
+
+      // A tab that has not said where it is gets an error, not another tab's page.
+      const quiet = new FakeExtension({ port: connector.port, tabId: 3 });
+      try {
+        await quiet.connect();
+        await quiet.waitForWelcome();
+        await vi.waitFor(() => expect(connector.listTabs().map((t) => t.tabId)).toContain(3));
+        await expect(client.audit("seo", { tabId: 3 })).rejects.toThrow(/Tab 3 has not reported its page/);
+      } finally {
+        await quiet.close();
+      }
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+    }
+  });
+
+  it("audits the current tab's own page when no tab is named", async () => {
+    // The store's current page follows page reports, not tab selection, so
+    // an audit with no tabId used to take whichever tab last reported while
+    // current, which may no longer be the current one.
+    const first = new FakeExtension({ port: connector.port, tabId: 1 });
+    const second = new FakeExtension({ port: connector.port, tabId: 2 });
+    const quiet = new FakeExtension({ port: connector.port, tabId: 3 });
+    try {
+      for (const [ext, tabId, url] of [
+        [first, 1, "https://one.example/"],
+        [second, 2, "https://two.example/"],
+      ] as const) {
+        await ext.connect();
+        await ext.waitForWelcome();
+        ext.send({ type: "page", url, tabId });
+        await vi.waitFor(() => expect(connector.listTabs().find((t) => t.tabId === tabId)?.url).toBe(url));
+      }
+      const client = makeClient();
+      expect(connector.getCurrentTabId()).toBe(2);
+      expect((await client.audit("seo", {})).metadata.url).toBe("https://two.example/");
+
+      connector.setCurrentTab(1);
+      expect((await client.audit("seo", {})).metadata.url).toBe("https://one.example/");
+
+      // A newly opened tab becomes current before it has said where it is.
+      await quiet.connect();
+      await quiet.waitForWelcome();
+      await vi.waitFor(() => expect(connector.getCurrentTabId()).toBe(3));
+      await expect(client.audit("seo", {})).rejects.toThrow(/Tab 3 has not reported its page/);
+    } finally {
+      await Promise.all([first.close(), second.close(), quiet.close()]);
+    }
+  });
+
   it("surfaces connector errors as thrown errors, not silent empties", async () => {
     const client = makeClient();
     // No extension connected, so a screenshot cannot succeed.
@@ -219,6 +292,24 @@ describe("runtime attach behaviour", () => {
     // Closing the attached runtime must not stop the connector someone else owns.
     await runtime.close();
     expect(connector.hasExtension()).toBe(true);
+  });
+
+  it("says so when audit flags cannot apply because it attached", async () => {
+    publishSession();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const runtime = await createRuntime({ ...baseOptions, auditAllowedOrigins: ["http://localhost:4000"] });
+      expect(runtime.connector).toBeNull();
+      await runtime.close();
+      const written = stderr.mock.calls.map((call) => String(call[0])).join("");
+      expect(written).toMatch(
+        /WARN .*--audit-allow-origin and --audit-allow-private-network .*take effect only in the process that starts the connector/
+      );
+      // Not "ignored": the connector may have been started with the very same values.
+      expect(written).not.toMatch(/ignored/);
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("starts its own connector when the session file points at a dead port", async () => {
