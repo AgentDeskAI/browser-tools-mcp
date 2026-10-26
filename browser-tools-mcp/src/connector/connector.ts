@@ -1402,14 +1402,33 @@ function parseList(value: unknown): string[] | undefined {
   return undefined;
 }
 
+/** Consecutive ports tried when the requested one is already taken. */
+export const CONNECTOR_BIND_ATTEMPTS = 11;
+
 /** Binds the requested port, walking forward if it is taken. */
-function listen(server: http.Server, host: string, startPort: number, attempts = 11): Promise<number> {
+function listen(
+  server: http.Server,
+  host: string,
+  startPort: number,
+  attempts = CONNECTOR_BIND_ATTEMPTS
+): Promise<number> {
   return new Promise((resolve, reject) => {
     let port = startPort;
     let remaining = attempts;
 
     const tryListen = () => {
+      const onListening = () => {
+        server.off("error", onError);
+        const address = server.address();
+        resolve(typeof address === "object" && address ? address.port : port);
+      };
+
       const onError = (error: NodeJS.ErrnoException) => {
+        // listen() registers onListening before the bind is attempted. A
+        // failed attempt leaves it in place, so a walk across taken ports
+        // stacks one listener per try and every one of them runs if a later
+        // port succeeds.
+        server.off("listening", onListening);
         if (error.code === "EADDRINUSE" && remaining > 1 && startPort !== 0) {
           remaining -= 1;
           port += 1;
@@ -1420,11 +1439,7 @@ function listen(server: http.Server, host: string, startPort: number, attempts =
       };
 
       server.once("error", onError);
-      server.listen(port, host, () => {
-        server.off("error", onError);
-        const address = server.address();
-        resolve(typeof address === "object" && address ? address.port : port);
-      });
+      server.listen(port, host, onListening);
     };
 
     tryListen();
