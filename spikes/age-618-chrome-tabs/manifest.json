@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "AGE-618 chrome.tabs spike",
+  "version": "0.0.1",
+  "description": "Records which windows and tabs chrome.tabs can see. Does not use the debugger and does not change existing tab URLs.",
+  "action": {
+    "default_title": "AGE-618 chrome.tabs spike",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "permissions": ["tabs", "tabGroups", "storage", "alarms"],
+  "incognito": "split"
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AGE-618 chrome.tabs spike</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>AGE-618 chrome.tabs spike</h1>
+      <p>Records windows and tabs. Does not read pages, use the debugger, or change an existing tab’s URL.</p>
+      <label>
+        Browser name
+        <input id="browser" type="text" autocomplete="off" placeholder="Arc 1.170" />
+      </label>
+      <p id="live"></p>
+    </header>
+
+    <section>
+      <h2>Snapshots</h2>
+      <ol id="surfaces"></ol>
+    </section>
+
+    <section>
+      <h2>Probes</h2>
+      <p>These do not navigate a tab you already have open.</p>
+      <button type="button" id="probe-update">1. tabs.update active:false</button>
+      <button type="button" id="probe-create">2. Open example.com in the background</button>
+      <button type="button" id="discard">Discard a background tab</button>
+      <div id="probe-question" hidden>
+        <p id="probe-prompt"></p>
+        <button type="button" id="space-no">Space stayed</button>
+        <button type="button" id="space-yes">Space switched</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Paste into AGE-618</h2>
+      <textarea id="markdown" readonly></textarea>
+      <button type="button" id="copy">Copy markdown</button>
+      <button type="button" id="save-json">Save JSON</button>
+      <button type="button" id="reset">Reset</button>
+      <p id="status" role="status"></p>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

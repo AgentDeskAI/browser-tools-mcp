@@ -1,0 +1,67 @@
+body {
+  margin: 0;
+  width: 380px;
+  color: #1c1917;
+  background: #fafaf9;
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+header,
+section {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e7e5e4;
+}
+
+h1,
+h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+}
+
+input[type="text"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  font: inherit;
+}
+
+ol {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+li {
+  margin: 0 0 8px;
+}
+
+li span {
+  display: block;
+  color: #57534e;
+}
+
+button {
+  font: inherit;
+  margin: 0 6px 6px 0;
+}
+
+textarea {
+  width: 100%;
+  height: 140px;
+  box-sizing: border-box;
+  font: 11px/1.35 ui-monospace, monospace;
+}
+
+#status {
+  min-height: 1.2em;
+  color: #7f1d1d;
+}
