@@ -81,9 +81,24 @@ async function ensureConnected() {
     return;
   }
 
+  var token = "";
+  try {
+    var paired = await fetch("http://" + found.host + ":" + found.port + "/.pair", { method: "POST" });
+    if (paired.ok) {
+      var body = await paired.json();
+      if (body && typeof body.token === "string") token = body.token;
+    }
+  } catch (error) {
+    token = "";
+  }
+  if (!token) {
+    scheduleReconnect();
+    return;
+  }
+
   var ws;
   try {
-    ws = new WebSocket("ws://" + found.host + ":" + found.port + "/extension-ws");
+    ws = new WebSocket("ws://" + found.host + ":" + found.port + "/extension-ws", ["browser-tools", token]);
   } catch (error) {
     scheduleReconnect();
     return;
@@ -92,7 +107,7 @@ async function ensureConnected() {
 
   ws.onopen = function () {
     reconnectDelayMs = 1000;
-    send({ type: "hello", extensionVersion: "2.0.0", role: "worker" });
+    send({ type: "hello", extensionVersion: "2.0.4", role: "worker" });
     void reportState();
   };
 
@@ -105,6 +120,8 @@ async function ensureConnected() {
     }
     if (message && message.type === "capability-probe") {
       void answerProbe(message);
+    } else if (message && message.type === "navigate-tab") {
+      void navigateTab(message);
     } else if (message && message.type === "ping") {
       send({ type: "pong", id: message.id });
     }
@@ -124,6 +141,76 @@ async function ensureConnected() {
  * Reads the switch and the tab again. The URL on the probe message is ignored;
  * chrome.tabs.get is the only source.
  */
+function respond(requestId, payload) {
+  send(Object.assign({ requestId: requestId }, payload));
+}
+
+function waitForTabUrl(tabId, timeoutMs) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () {
+      if (done) return;
+      done = true;
+      api.tabs
+        .get(tabId)
+        .then(function (tab) {
+          resolve(tab && tab.url ? tab.url : "");
+        })
+        .catch(function () {
+          resolve("");
+        });
+    }, timeoutMs);
+
+    function onUpdated(updatedId, changeInfo, tab) {
+      if (done) return;
+      if (String(updatedId) !== String(tabId)) return;
+      if (changeInfo.status === "complete" && tab && tab.url) {
+        done = true;
+        clearTimeout(timer);
+        api.tabs.onUpdated.removeListener(onUpdated);
+        resolve(tab.url);
+      }
+    }
+    api.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+async function navigateTab(message) {
+  var tabId = message.tabId;
+  var url = message.url;
+  if ((typeof tabId !== "number" && typeof tabId !== "string") || typeof url !== "string" || !url) {
+    respond(message.requestId, {
+      type: "navigate-result",
+      ok: false,
+      error: "tabId and url are required",
+    });
+    return;
+  }
+
+  try {
+    var before = await api.tabs.get(tabId);
+    var wasDiscarded = Boolean(before && before.discarded);
+    await api.tabs.update(tabId, { url: url, active: false });
+    var finalUrl = await waitForTabUrl(tabId, 30000);
+    if (!finalUrl) {
+      var after = await api.tabs.get(tabId);
+      finalUrl = after && after.url ? after.url : url;
+    }
+    respond(message.requestId, {
+      type: "navigate-result",
+      ok: true,
+      finalUrl: finalUrl,
+      wasDiscarded: wasDiscarded,
+    });
+  } catch (error) {
+    respond(message.requestId, {
+      type: "navigate-result",
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function answerProbe(message) {
   var state = await readHumanState();
   var liveUrl = null;

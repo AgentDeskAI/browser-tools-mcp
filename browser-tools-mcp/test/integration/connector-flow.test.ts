@@ -19,7 +19,7 @@ beforeEach(async () => {
     screenshotDir,
     heartbeatIntervalMs: 200,
     requestTimeoutMs: 3_000,
-    allowActions: true,
+    allowInput: true,
   });
 });
 

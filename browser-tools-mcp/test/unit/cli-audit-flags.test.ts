@@ -15,12 +15,11 @@ describe("audit flags", () => {
     for (const value of ["false", "0", "", "yes"]) expect(allows(value), value).toBe(false);
   });
 
-  it("reads --allow-actions and --extension-id the same way as the other switches", () => {
-    expect(parseCli([], {}).allowActions).toBe(false);
-    expect(parseCli([], {}).extensionId).toBeUndefined();
-    expect(parseCli(["--allow-actions"], {}).allowActions).toBe(true);
-    expect(parseCli([], { BROWSER_TOOLS_ALLOW_ACTIONS: "1" }).allowActions).toBe(true);
-    expect(parseCli([], { BROWSER_TOOLS_ALLOW_ACTIONS: "yes" }).allowActions).toBe(false);
+  it("keeps capability flags argv-only and reads --extension-id from argv or env", () => {
+    expect(parseCli([], {}).allowInput).toBe(false);
+    expect(parseCli([], {}).allowEval).toBe(false);
+    expect(parseCli(["--allow-input"], {}).allowInput).toBe(true);
+    expect(parseCli([], { BROWSER_TOOLS_ALLOW_ACTIONS: "1" }).allowInput).toBe(false);
     expect(parseCli(["--extension-id", "abcdefghijklmnopabcdefghijklmnop"], {}).extensionId).toBe(
       "abcdefghijklmnopabcdefghijklmnop"
     );

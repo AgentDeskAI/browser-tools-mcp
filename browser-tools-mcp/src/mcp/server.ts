@@ -595,6 +595,49 @@ const TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "navigateBrowser",
+    register(server, client) {
+      server.registerTool(
+        "navigateBrowser",
+        {
+          title: "Navigate to a URL",
+          description:
+            "Loads a URL in the chosen browser tab without focusing it or attaching the debugger. " +
+            "Uses the tabId from listBrowserTabs. Requires the extension service worker, the popup " +
+            "switch, and --allow-input on browser-tools-mcp (browser-tools CLI: --allow-actions).",
+          inputSchema: {
+            url: z.string().describe("http(s) URL to load in the tab"),
+            tabId: tabIdInput,
+          },
+          outputSchema: {
+            tabId: z.union([z.number(), z.string()]),
+            requestedUrl: z.string(),
+            finalUrl: z.string(),
+            wasDiscarded: z.boolean(),
+          },
+          annotations: {
+            title: "Navigate to a URL",
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+        },
+        async ({ url, tabId }) => {
+          try {
+            const result = await client.navigate({
+              url,
+              ...(tabId !== undefined ? { tabId } : {}),
+            });
+            return ok(result as unknown as Record<string, unknown>);
+          } catch (error) {
+            return fail(error);
+          }
+        }
+      );
+    },
+  },
+  {
     name: "refreshBrowser",
     register(server, client) {
       server.registerTool(

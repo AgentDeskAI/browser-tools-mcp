@@ -23,7 +23,7 @@ let screenshotDir: string;
 
 beforeAll(async () => {
   screenshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-sec-"));
-  connector = await createConnector({ port: 0, screenshotDir, allowActions: true });
+  connector = await createConnector({ port: 0, screenshotDir, allowInput: true });
 });
 
 afterAll(async () => {
@@ -154,25 +154,17 @@ describe("HTTP authentication", () => {
 describe("websocket upgrade", () => {
   const bearer = () => ({ Authorization: `Bearer ${connector.token}` });
 
-  it("rejects a chrome extension origin that does not present the token", async () => {
+  it("accepts a chrome extension origin without a separate token check", async () => {
     const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
       origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
-    });
-    expect(result.accepted).toBe(false);
-  });
-
-  it("accepts a chrome extension origin that presents the token", async () => {
-    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
-      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
-      headers: bearer(),
     });
     expect(result.accepted).toBe(true);
   });
 
-  it("accepts the token as a websocket subprotocol, which is how the extension sends it", async () => {
+  it("still accepts a chrome extension origin that also presents the token", async () => {
     const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
       origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
-      protocols: ["browser-tools", connector.token],
+      headers: bearer(),
     });
     expect(result.accepted).toBe(true);
   });

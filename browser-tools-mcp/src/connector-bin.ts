@@ -42,10 +42,6 @@ async function main(): Promise<void> {
         `                           Let audits reach any loopback or private address, except the\n` +
         `                           audits' own ports (not recommended). Also needed behind a\n` +
         `                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)\n` +
-        `      --only <a,b>         Serve only these tools on the local API\n` +
-        `      --exclude <a,b>      Do not serve these tools on the local API\n` +
-        `      --allow-actions      Allow reload, screenshot, wipe, settings and tab select\n` +
-        `      --extension-id <id>  Only this extension may connect\n` +
         `      --allow-eval         Allow script evaluation. Off unless passed. No environment variable.\n` +
         `      --allow-input        Allow click, type, navigation, and soft input. Off unless passed.\n` +
         `                           No environment variable.\n` +
@@ -53,8 +49,7 @@ async function main(): Promise<void> {
         `                           http(s) origins where input and navigation are allowed besides local addresses\n` +
         `      --exclude-origins <o,o>\n` +
         `                           http(s) origins that are never acted on. Empty unless set.\n\n` +
-        `Audit settings, tool filters, --allow-actions and capability flags apply to every MCP\n` +
-        `client that attaches to this connector.\n`
+        `Audit and capability settings apply to every MCP client that attaches to this connector.\n`
     );
     return;
   }
@@ -68,14 +63,13 @@ async function main(): Promise<void> {
     verbose: options.verbose,
     ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
     auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
-    ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
-    ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
-    allowActions: options.allowActions,
-    ...(options.extensionId ? { extensionId: options.extensionId } : {}),
     allowEval: options.allowEval,
     allowInput: options.allowInput,
     ...(options.allowInputOrigins ? { allowInputOrigins: options.allowInputOrigins } : {}),
     ...(options.excludeOrigins ? { excludeOrigins: options.excludeOrigins } : {}),
+    ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
+    ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
+    ...(options.extensionId ? { extensionId: options.extensionId } : {}),
   });
 
   writeSessionFile({

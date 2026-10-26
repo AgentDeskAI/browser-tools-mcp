@@ -71,6 +71,7 @@ describe("tool registration", () => {
         "getPageInfo",
         "getSelectedElement",
         "listBrowserTabs",
+        "navigateBrowser",
         "refreshBrowser",
         "runAccessibilityAudit",
         "runBestPracticesAudit",

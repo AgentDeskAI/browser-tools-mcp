@@ -14,6 +14,7 @@ export interface FakeExtensionOptions {
   /** Respond to capture-screenshot requests. Defaults to returning TINY_PNG_BASE64. */
   onScreenshot?: (msg: any) => Promise<unknown> | unknown;
   onRefresh?: (msg: any) => Promise<unknown> | unknown;
+  onNavigate?: (msg: any) => Promise<unknown> | unknown;
   onStorage?: (msg: any) => Promise<unknown> | unknown;
   /** `worker` answers capability probes and is not a DevTools tab. */
   role?: "devtools" | "worker";
@@ -103,6 +104,14 @@ export class FakeExtension {
         const custom = this.#options.onRefresh;
         const payload = custom ? await custom(msg) : { ok: true };
         this.send({ type: "refresh-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "navigate-tab": {
+        const custom = this.#options.onNavigate;
+        const payload = custom
+          ? await custom(msg)
+          : { ok: true, finalUrl: msg.url, wasDiscarded: false };
+        this.send({ type: "navigate-result", requestId: msg.requestId, ...(payload as object) });
         break;
       }
       case "get-storage": {

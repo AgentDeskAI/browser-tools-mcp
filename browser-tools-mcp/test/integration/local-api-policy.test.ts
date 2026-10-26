@@ -20,7 +20,7 @@ describe("tool filtering on the local API", () => {
   beforeAll(async () => {
     connector = await createConnector({
       port: 0,
-      allowActions: true,
+      allowInput: true,
       enabledTools: ["getConsoleLogs", "getPageInfo", "wipeLogs", "runPerformanceAudit"],
       disabledTools: ["wipeLogs"],
       auditLookup: async () => ["93.184.215.14"],
@@ -97,7 +97,7 @@ describe("confirmation gate on state-changing local API calls", () => {
     const ext = new FakeExtension({ port: connector.port });
     await ext.connect();
     await ext.waitForWelcome();
-    ext.send({ type: "actions-confirmed", confirmed: true });
+    ext.send({ type: "capability-state", panelEnabled: true, popupEnabled: false, excludeOrigins: [] });
 
     await vi.waitFor(async () => {
       const allowed = await request(connector.app).post("/api/wipe").set(auth).send({});
@@ -113,7 +113,7 @@ describe("confirmation gate on state-changing local API calls", () => {
   });
 
   it("allows those calls when the connector was started with --allow-actions", async () => {
-    const open = await createConnector({ port: 0, allowActions: true });
+    const open = await createConnector({ port: 0, allowInput: true });
     try {
       const res = await request(open.app)
         .post("/api/tabs/select")
