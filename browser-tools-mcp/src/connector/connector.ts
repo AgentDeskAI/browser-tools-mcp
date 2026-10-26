@@ -1482,7 +1482,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
     const worker = workerConnection();
     if (!worker) {
-      return denyCheck(action, action === "listTabs" ? GateReason.switchUnconfirmed : GateReason.notRechecked);
+      if (needsPopup) return denyCheck(action, GateReason.popupOff);
+      return denyCheck(action, GateReason.notRechecked);
     }
 
     let probe: Record<string, unknown>;
