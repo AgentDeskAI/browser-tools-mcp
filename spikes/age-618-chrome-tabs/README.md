@@ -13,7 +13,7 @@ Permissions: `tabs` (the API under test), `tabGroups` (split view may or may not
 3. Load unpacked and choose this folder: `spikes/age-618-chrome-tabs`.
 4. Pin **AGE-618 chrome.tabs spike**. Leave the extension off in incognito unless you want that row. Private windows stay hidden until you allow it.
 
-Set **Browser name** before the first snapshot (`Arc 1.170`, then later `Chrome`, `Dia`, or `Helium`). One browser per export. Hit **Reset** before the next browser. Reset asks for a second click.
+Set **Browser name** before the first snapshot (`Arc 1.170`, then `Chrome` stable after **Reset**). Spike scope is **Arc and Chrome only** (see AGE-618). One browser per export. Hit **Reset** before switching browsers. Reset asks for a second click.
 
 ## Five minutes
 
@@ -28,7 +28,7 @@ Do this in order. After each step, click that row’s button, then type what the
 7. **active:false** (about 30 seconds). Click **tabs.update active:false**. It picks an inactive tab, preferably in a window that is not focused, and sets `{ active: false }` only. Answer **Space stayed** or **Space switched**.
 8. **Background open** (about 40 seconds). Click **Open example.com in the background**. Answer whether the Space switched. Answering closes example.com.
 
-Click **Copy markdown** and paste it on the AGE-618 card under the matching browser. The paste has origins, not titles or paths. Read it before it goes into Linear. **Save JSON** is the same record if you want to attach the file. Then **Reset**, change the browser name, and repeat on the browser you are moving to after Arc.
+Click **Copy markdown** and paste it on the AGE-618 card under the matching browser. The paste has origins, not titles or paths. Read it before it goes into Linear. **Save JSON** is the same record if you want to attach the file. After Arc, **Reset**, set the browser name to `Chrome`, and repeat the steps on Chrome stable (skip Little Arc, favorites, and split rows with `n/a` if Chrome has no equivalent).
 
 ## How to read an empty cell
 
