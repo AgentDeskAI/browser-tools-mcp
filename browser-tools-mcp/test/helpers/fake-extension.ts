@@ -15,6 +15,9 @@ export interface FakeExtensionOptions {
   onScreenshot?: (msg: any) => Promise<unknown> | unknown;
   onRefresh?: (msg: any) => Promise<unknown> | unknown;
   onStorage?: (msg: any) => Promise<unknown> | unknown;
+  /** `worker` answers capability probes and is not a DevTools tab. */
+  role?: "devtools" | "worker";
+  onCapabilityProbe?: (msg: any) => Promise<unknown> | unknown;
 }
 
 /**
@@ -66,10 +69,12 @@ export class FakeExtension {
       });
     });
 
+    const role = this.#options.role;
     this.send({
       type: "hello",
       extensionVersion: "test",
-      tabId: this.#options.tabId ?? 1,
+      ...(role ? { role } : {}),
+      ...(role === "worker" ? {} : { tabId: this.#options.tabId ?? 1 }),
     });
   }
 
@@ -106,6 +111,18 @@ export class FakeExtension {
           ? await custom(msg)
           : { ok: true, storage: { localStorage: {}, sessionStorage: {}, cookies: [] } };
         this.send({ type: "storage-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "capability-probe": {
+        const custom = this.#options.onCapabilityProbe;
+        if (!custom) break;
+        const payload = await custom(msg);
+        this.send({
+          type: "capability-probe-result",
+          requestId: msg.requestId,
+          ok: true,
+          ...(payload as object),
+        });
         break;
       }
       default:

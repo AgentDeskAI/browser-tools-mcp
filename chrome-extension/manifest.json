@@ -3,8 +3,15 @@
   "name": "BrowserTools MCP",
   "version": "2.0.4",
   "description": "Sends console logs, network requests and screenshots from your browser to a local MCP server so AI coding agents can read them.",
+  "action": {
+    "default_title": "BrowserTools MCP",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "worker.js"
+  },
   "devtools_page": "devtools.html",
-  "permissions": ["debugger", "storage"],
+  "permissions": ["debugger", "storage", "tabs", "alarms"],
   "optional_permissions": ["cookies"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "optional_host_permissions": ["<all_urls>"],

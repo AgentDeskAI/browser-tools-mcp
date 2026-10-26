@@ -74,6 +74,13 @@
     }
     bridge.subscribe(renderStatus);
 
+    if (bridge.getPanelInputEnabled) {
+      el("allowPanelInput").checked = Boolean(await bridge.getPanelInputEnabled());
+    }
+    el("allowPanelInput").addEventListener("change", () => {
+      if (bridge.setPanelInputEnabled) void bridge.setPanelInputEnabled(el("allowPanelInput").checked);
+    });
+
     el("save").addEventListener("click", async () => {
       await bridge.updateSettings(collectSettings());
       el("detail").textContent = "Settings saved.";

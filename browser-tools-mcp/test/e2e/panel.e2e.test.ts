@@ -68,6 +68,10 @@ function bridgeStub(settings: Record<string, unknown>) {
         window.__calls.push(["requestCookiePermission"]);
         return window.__cookieGrant;
       },
+      getPanelInputEnabled: async () => false,
+      setPanelInputEnabled: async (enabled) => {
+        window.__calls.push(["setPanelInputEnabled", enabled]);
+      },
     };
     window.__pushStatus = (status) => window.__listener(status);
   `;
@@ -158,6 +162,21 @@ describe.skipIf(!browserSupport.usable)("panel UI in the real extension origin",
     expect(await page.isChecked("#captureResponseBodies")).toBe(false);
     expect(await page.isChecked("#showRequestHeaders")).toBe(false);
     expect(await page.isChecked("#showResponseHeaders")).toBe(true);
+    expect(await page.isChecked("#allowPanelInput")).toBe(false);
+
+    await page.close();
+  });
+
+  it("keeps the panel input switch out of saved capture settings", async () => {
+    expect(await page.isChecked("#allowPanelInput")).toBe(false);
+    await page.click("#allowPanelInput");
+    await page.click("#save");
+
+    const calls = (await page.evaluate(() => (window as any).__calls)) as any[];
+    expect(calls.some((call) => call[0] === "setPanelInputEnabled" && call[1] === true)).toBe(true);
+    const saved = calls.filter((call) => call[0] === "updateSettings").at(-1);
+    expect(saved[1].allowPanelInput).toBeUndefined();
+    expect(Object.keys(saved[1])).not.toContain("allowPanelInput");
 
     await page.close();
   });
@@ -373,5 +392,45 @@ describe.skipIf(!browserSupport.usable)("panel and devtools page agree on the br
     for (const id of ids) {
       expect(markup.includes(`id="${id}"`), `panel.html is missing id="${id}"`).toBe(true);
     }
+  });
+});
+
+describe.skipIf(!browserSupport.usable)("popup switch in the extension origin", () => {
+  it("defaults off, stores a session choice, and saves only http(s) excludes", async () => {
+    const popup = await context!.newPage();
+    const errors: string[] = [];
+    popup.on("pageerror", (error) => errors.push(error.message));
+    await popup.goto(`chrome-extension://${extensionId}/popup.html`, { waitUntil: "domcontentloaded" });
+    await popup.waitForSelector("html[data-ready=true]");
+
+    expect(await popup.isChecked("#allowPageActions")).toBe(false);
+    expect(await popup.inputValue("#excludeOrigins")).toBe("");
+
+    await popup.click("#allowPageActions");
+    await popup.waitForFunction(async () => {
+      const stored = await chrome.storage.session.get("btmcpPopupSwitch");
+      return stored.btmcpPopupSwitch === true;
+    });
+
+    await popup.fill("#excludeOrigins", "example.com\nhttps://excluded.example");
+    await popup.locator("#excludeOrigins").blur();
+    await popup.waitForFunction(async () => {
+      const stored = await chrome.storage.local.get("btmcpExcludeOrigins");
+      return (
+        Array.isArray(stored.btmcpExcludeOrigins) &&
+        stored.btmcpExcludeOrigins.length === 1 &&
+        stored.btmcpExcludeOrigins[0] === "https://excluded.example"
+      );
+    });
+    expect(await popup.inputValue("#excludeOrigins")).toBe("https://excluded.example");
+
+    await popup.click("#allowPageActions");
+    await popup.waitForFunction(async () => {
+      const stored = await chrome.storage.session.get("btmcpPopupSwitch");
+      return stored.btmcpPopupSwitch === false;
+    });
+
+    expect(errors).toEqual([]);
+    await popup.close();
   });
 });

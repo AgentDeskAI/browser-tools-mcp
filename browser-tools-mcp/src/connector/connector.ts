@@ -20,6 +20,7 @@ import {
   WEBSOCKET_PROTOCOL,
   bearerToken,
   extensionOriginAllowed,
+  isExtensionOrigin,
   isAllowedHostHeader,
   isLoopbackHost,
   localOnlyGuard,
@@ -56,6 +57,16 @@ import {
   vouchKeysOf,
 } from "../lighthouse/destination.js";
 import { isAuditCategory, type AuditCategory, type AuditReport } from "../lighthouse/types.js";
+import {
+  decideCapability,
+  GateReason,
+  INPUT_ACTIONS,
+  isNoDevtoolsAction,
+  normalizeOriginList,
+  PANEL_ACTIONS,
+  type CapabilityAction,
+  type GatePolicy,
+} from "../gates/capability.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
 export const SERVER_VERSION = "2.0.0";
@@ -151,6 +162,14 @@ export interface ConnectorConfig {
    * open the extension socket. Other extension origins are refused.
    */
   extensionId?: string;
+  /** Script evaluation. Off unless the process was started with --allow-eval. */
+  allowEval?: boolean;
+  /** Click, type, navigation, and soft input. Off unless started with --allow-input. */
+  allowInput?: boolean;
+  /** http(s) origins where input and navigation are allowed besides local addresses. */
+  allowInputOrigins?: string[];
+  /** http(s) origins that are never acted on. Empty unless set. */
+  excludeOrigins?: string[];
 }
 
 export interface TabView {
@@ -224,7 +243,23 @@ export interface Connector {
     category: AuditCategory,
     options?: { url?: string; tabId?: TabId }
   ): Promise<AuditReport>;
+  /**
+   * Decides a capability action. Does not perform it.
+   * The live URL comes from the extension worker's tab read during this call,
+   * not from the URL the connector last stored for the tab.
+   */
+  checkCapability(
+    action: CapabilityAction,
+    options?: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean }
+  ): Promise<CapabilityCheck>;
   close(): Promise<void>;
+}
+
+export interface CapabilityCheck {
+  allowed: boolean;
+  action: string;
+  reason: string;
+  liveUrl: string | null;
 }
 
 interface ExtensionConnection {
@@ -238,6 +273,12 @@ interface ExtensionConnection {
   pageUrl?: string;
   /** Set by the DevTools panel. Dies with the socket. */
   actionsConfirmed: boolean;
+  /** Worker sockets answer capability probes. They are not DevTools tabs. */
+  role: "devtools" | "worker";
+  /** True when the browser set an extension Origin on the upgrade. */
+  fromExtension: boolean;
+  /** Popup report that arrived before hello named this socket as the worker. */
+  pendingPopup?: boolean;
 }
 
 interface PendingRequest {
@@ -279,6 +320,21 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
   const store = new TelemetryStore({ redact: config.redact !== false });
   const verbose = config.verbose === true;
+
+  const inputOriginList = normalizeOriginList(config.allowInputOrigins);
+  const excludeOriginList = normalizeOriginList(config.excludeOrigins);
+  for (const rejected of [...inputOriginList.rejected, ...excludeOriginList.rejected]) {
+    log.warn(`Ignoring capability origin ${JSON.stringify(rejected)}: not an http(s) origin`);
+  }
+  const capabilityPolicy: GatePolicy = {
+    allowEval: config.allowEval === true,
+    allowInput: config.allowInput === true,
+    inputOrigins: inputOriginList.origins,
+    excludeOrigins: excludeOriginList.origins,
+  };
+  const excludeListInvalid = excludeOriginList.rejected.length > 0;
+  let popupEnabled = false;
+  let panelEnabled = false;
 
   /**
    * Reports a captured entry to the terminal.
@@ -330,7 +386,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       version: SERVER_VERSION,
       signature: SERVER_SIGNATURE,
       port: actualPort,
-      extensionConnected: connections.size > 0,
+      extensionConnected: telemetryConnected(),
     });
   });
 
@@ -468,7 +524,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     res.json({
       url: current?.url || page.url,
       tabId: currentTabId ?? page.tabId,
-      extensionConnected: connections.size > 0,
+      extensionConnected: telemetryConnected(),
       connectedTabs: tabs.size,
     });
   });
@@ -476,7 +532,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   api.get("/status", (_req, res) => {
     res.json({
       version: SERVER_VERSION,
-      extensionConnected: connections.size > 0,
+      extensionConnected: telemetryConnected(),
       connections: connections.size,
       tabs: tabs.size,
       currentTabId,
@@ -611,8 +667,10 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     const id = crypto.randomUUID();
+    const originHeader = req.headers.origin;
+    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
     const connection: ExtensionConnection = {
       ws,
       id,
@@ -621,6 +679,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       lastSeen: Date.now(),
       tabId: null,
       actionsConfirmed: false,
+      role: "devtools",
+      fromExtension: isExtensionOrigin(origin),
     };
     connections.set(id, connection);
     log.info(`Extension connected (${connections.size} active)`);
@@ -698,6 +758,16 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
 
     if (connection.tabId !== null) dropTab(connection.tabId, id);
+    if (connection.role === "worker") {
+      const anotherWorker = [...connections.values()].some(
+        (candidate) => candidate.role === "worker" && candidate.fromExtension
+      );
+      if (!anotherWorker) popupEnabled = false;
+    } else if (
+      ![...connections.values()].some((candidate) => candidate.role !== "worker" && candidate.fromExtension)
+    ) {
+      panelEnabled = false;
+    }
     log.info(`Extension disconnected (${connections.size} active)`);
   }
 
@@ -917,7 +987,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       // wrongly here, so use whatever socket is open. Once any tab is known this
       // path is never taken, and targeting is strict.
       const fallback = [...connections.values()]
-        .filter((c) => c.ws.readyState === WebSocket.OPEN)
+        .filter((c) => c.role !== "worker" && c.ws.readyState === WebSocket.OPEN)
         .sort((a, b) => b.lastSeen - a.lastSeen)[0];
       if (!fallback) throw new NoExtensionError();
       return fallback;
@@ -938,8 +1008,26 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     connection.lastSeen = Date.now();
     const type = typeof message["type"] === "string" ? (message["type"] as string) : "";
 
+    if (
+      connection.role === "worker" &&
+      (type === "console" ||
+        type === "network" ||
+        type === "selected-element" ||
+        type === "page" ||
+        type === "settings")
+    ) {
+      return;
+    }
+
     switch (type) {
       case "hello": {
+        if (message["role"] === "worker" && connection.fromExtension) {
+          connection.role = "worker";
+          connection.tabId = null;
+          if (connection.pendingPopup !== undefined) popupEnabled = connection.pendingPopup;
+          break;
+        }
+        connection.role = "devtools";
         const tabId = message["tabId"];
         if (typeof tabId === "number" || typeof tabId === "string") bindTab(connection, tabId);
         break;
@@ -949,6 +1037,17 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         // not outlive this socket — closing DevTools withdraws it.
         connection.actionsConfirmed = message["confirmed"] === true;
         break;
+      case "capability-state": {
+        if (!connection.fromExtension) break;
+        if (typeof message["popupEnabled"] === "boolean") {
+          connection.pendingPopup = message["popupEnabled"];
+          if (connection.role === "worker") popupEnabled = message["popupEnabled"];
+        }
+        if (connection.role !== "worker" && typeof message["panelEnabled"] === "boolean") {
+          panelEnabled = message["panelEnabled"];
+        }
+        break;
+      }
       case "pong":
         connection.awaitingPong = false;
         connection.missedPings = 0;
@@ -993,6 +1092,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "screenshot-result":
       case "refresh-result":
       case "storage-result":
+      case "capability-probe-result":
         resolvePending(connection, message);
         break;
       default:
@@ -1341,6 +1441,86 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
   log.info(`Connector listening on http://${host}:${actualPort}`);
 
+  function devtoolsConnections(): ExtensionConnection[] {
+    return [...connections.values()].filter((connection) => connection.role !== "worker");
+  }
+
+  function telemetryConnected(): boolean {
+    return devtoolsConnections().some((connection) => connection.ws.readyState === WebSocket.OPEN);
+  }
+
+  function workerConnection(): ExtensionConnection | undefined {
+    return [...connections.values()].find(
+      (connection) =>
+        connection.role === "worker" &&
+        connection.fromExtension &&
+        connection.ws.readyState === WebSocket.OPEN
+    );
+  }
+
+  function denyCheck(action: string, reason: string): CapabilityCheck {
+    return { allowed: false, action, reason, liveUrl: null };
+  }
+
+  async function checkCapability(
+    action: CapabilityAction,
+    options: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean } = {}
+  ): Promise<CapabilityCheck> {
+    if (options.hideBanner === true) return denyCheck(action, GateReason.banner);
+    if (excludeListInvalid) return denyCheck(action, GateReason.excludeInvalid);
+
+    const needsPopup = isNoDevtoolsAction(action);
+    const needsPanel = (PANEL_ACTIONS as readonly string[]).includes(action);
+    const needsInput = (INPUT_ACTIONS as readonly string[]).includes(action);
+    const needsEval = action === "evaluateScript";
+
+    // Refuse before asking the extension to read a tab when a switch or flag is off.
+    if (needsPopup && !popupEnabled) return denyCheck(action, GateReason.popupOff);
+    if (needsPanel && !panelEnabled) return denyCheck(action, GateReason.panelOff);
+    if (needsInput && !capabilityPolicy.allowInput) return denyCheck(action, GateReason.inputOff);
+    if (needsEval && !capabilityPolicy.allowEval) return denyCheck(action, GateReason.evalOff);
+
+    const worker = workerConnection();
+    if (!worker) {
+      return denyCheck(action, action === "listTabs" ? GateReason.switchUnconfirmed : GateReason.notRechecked);
+    }
+
+    let probe: Record<string, unknown>;
+    try {
+      probe = await requestFromExtension(worker, "capability-probe", {
+        action,
+        ...(options.tabId !== undefined ? { tabId: options.tabId } : {}),
+      });
+    } catch {
+      return denyCheck(action, action === "listTabs" ? GateReason.switchUnconfirmed : GateReason.notRechecked);
+    }
+
+    const probePopup = probe["popupEnabled"] === true;
+    const probePanel = probe["panelEnabled"] === true;
+    const liveUrl = typeof probe["liveUrl"] === "string" && probe["liveUrl"] ? probe["liveUrl"] : null;
+    const reportedExclude = Array.isArray(probe["excludeOrigins"])
+      ? probe["excludeOrigins"].filter((entry): entry is string => typeof entry === "string")
+      : [];
+    const normalizedExclude = normalizeOriginList(reportedExclude);
+    if (normalizedExclude.rejected.length > 0) return denyCheck(action, GateReason.excludeInvalid);
+
+    if (needsPopup && !probePopup) return denyCheck(action, GateReason.popupOff);
+    if (needsPanel && !probePanel) return denyCheck(action, GateReason.panelOff);
+
+    const decision = decideCapability(action, {
+      policy: {
+        ...capabilityPolicy,
+        excludeOrigins: [...new Set([...capabilityPolicy.excludeOrigins, ...normalizedExclude.origins])],
+      },
+      popupEnabled: probePopup,
+      panelEnabled: probePanel,
+      liveUrl,
+      destinationUrl: options.destinationUrl ?? null,
+    });
+
+    return { allowed: decision.allowed, action, reason: decision.reason, liveUrl };
+  }
+
   async function close(): Promise<void> {
     clearInterval(heartbeat);
     for (const { timer, reject } of pending.values()) {
@@ -1376,7 +1556,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     host,
     token,
     screenshotDir,
-    hasExtension: () => connections.size > 0,
+    hasExtension: () => telemetryConnected(),
+    checkCapability,
     listTabs,
     getCurrentTabId: () => currentTabId,
     setCurrentTab,

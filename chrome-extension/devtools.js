@@ -110,8 +110,9 @@
     ws.onopen = () => {
       reconnectDelayMs = 1000;
       setState("connected");
-      send({ type: "hello", extensionVersion: "2.0.4", tabId });
-      if (actionsConfirmed) send({ type: "actions-confirmed", confirmed: true });
+      send({ type: "hello", extensionVersion: "2.0.4", tabId, role: "devtools" });
+      if (actionsConfirmed) send({ type: "actions-confirmed", confirmed: actionsConfirmed });
+      void reportPanelSwitch();
       sendPageState();
       startCapture();
       // Deliver anything captured while the connection was coming up.
@@ -185,6 +186,22 @@
       default:
         break;
     }
+  }
+
+  function readPanelSwitch() {
+    return new Promise((resolve) => {
+      try {
+        api.storage.session.get(BTMCP_GATES.PANEL_SWITCH_KEY, (stored) => {
+          resolve(stored?.[BTMCP_GATES.PANEL_SWITCH_KEY] === true);
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  async function reportPanelSwitch() {
+    send({ type: "capability-state", panelEnabled: await readPanelSwitch() });
   }
 
   function applyServerSettings(incoming) {
@@ -794,6 +811,22 @@
           listeners.add(listener);
           listener(getStatus());
           return () => listeners.delete(listener);
+        },
+        async getPanelInputEnabled() {
+          return readPanelSwitch();
+        },
+        async setPanelInputEnabled(enabled) {
+          const on = enabled === true;
+          await new Promise((resolve) => {
+            try {
+              const next = {};
+              next[BTMCP_GATES.PANEL_SWITCH_KEY] = on;
+              api.storage.session.set(next, () => resolve());
+            } catch {
+              resolve();
+            }
+          });
+          send({ type: "capability-state", panelEnabled: on });
         },
         async requestCookiePermission() {
           if (!api.permissions) return false;

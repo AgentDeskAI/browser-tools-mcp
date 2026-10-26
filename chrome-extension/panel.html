@@ -185,6 +185,14 @@
       current. Closing DevTools turns it off again.
     </p>
 
+    <h2>Input on this tab</h2>
+    <label><input type="checkbox" id="allowPanelInput" /> Allow click, type, and script evaluation on this tab</label>
+    <p class="note">
+      Off until you turn it on, and off again when you quit the browser. The server still has to be
+      started with <code>--allow-input</code> or <code>--allow-eval</code>. Tabs without DevTools open
+      use the toolbar popup. This does not hide the debugging banner.
+    </p>
+
     <h2>Capture</h2>
     <div class="row">
       <label class="field">
