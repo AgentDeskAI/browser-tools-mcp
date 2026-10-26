@@ -41,8 +41,13 @@ async function main(): Promise<void> {
         `      --audit-allow-private-network\n` +
         `                           Let audits reach any loopback or private address, except the\n` +
         `                           audits' own ports (not recommended). Also needed behind a\n` +
-        `                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)\n\n` +
-        `Audit settings apply to every MCP client that attaches to this connector.\n`
+        `                           fake-IP proxy (198.18.0.0/15 answers are refused otherwise)\n` +
+        `      --only <a,b>         Serve only these tools on the local API\n` +
+        `      --exclude <a,b>      Do not serve these tools on the local API\n` +
+        `      --allow-actions      Allow reload, screenshot, wipe, settings and tab select\n` +
+        `      --extension-id <id>  Only this extension may connect\n\n` +
+        `Audit settings, tool filters and --allow-actions apply to every MCP client\n` +
+        `that attaches to this connector.\n`
     );
     return;
   }
@@ -56,6 +61,10 @@ async function main(): Promise<void> {
     verbose: options.verbose,
     ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
     auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
+    ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
+    ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
+    allowActions: options.allowActions,
+    ...(options.extensionId ? { extensionId: options.extensionId } : {}),
   });
 
   writeSessionFile({

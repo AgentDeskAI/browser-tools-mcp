@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { EXAMPLE_CHROME_EXTENSION_ORIGIN } from "../../src/connector/security";
 
 /** A 1x1 transparent PNG, used wherever a test needs real image bytes. */
 export const TINY_PNG_BASE64 =
@@ -30,12 +31,26 @@ export class FakeExtension {
   }
 
   async connect(): Promise<void> {
-    const { port, origin = "chrome-extension://fakeextensionid", token } = this.#options;
-    const url = token
-      ? `ws://127.0.0.1:${port}/extension-ws?token=${encodeURIComponent(token)}`
-      : `ws://127.0.0.1:${port}/extension-ws`;
+    const { port, origin = EXAMPLE_CHROME_EXTENSION_ORIGIN, token: given } = this.#options;
+    let token = given;
+    if (!token) {
+      const paired = await fetch(`http://127.0.0.1:${port}/.pair`, {
+        method: "POST",
+        headers: { Origin: origin },
+      });
+      if (!paired.ok) {
+        throw new Error(`Extension pairing failed (${paired.status})`);
+      }
+      const body = (await paired.json()) as { token?: string };
+      if (!body.token) throw new Error("Extension pairing returned no token");
+      token = body.token;
+    }
 
-    const ws = new WebSocket(url, origin ? { origin } : {});
+    const url = `ws://127.0.0.1:${port}/extension-ws`;
+    const ws = new WebSocket(url, {
+      origin,
+      headers: { Authorization: `Bearer ${token}` },
+    });
     this.#ws = ws;
 
     // Attached before 'open' resolves: the server sends its welcome frame as
@@ -161,10 +176,11 @@ export class FakeExtension {
 /** Attempts a websocket connection and resolves with whether it was accepted. */
 export async function tryWebSocket(
   url: string,
-  options: WebSocket.ClientOptions = {}
+  options: WebSocket.ClientOptions & { protocols?: string | string[] } = {}
 ): Promise<{ accepted: boolean; statusCode?: number }> {
+  const { protocols, ...rest } = options;
   return new Promise((resolve) => {
-    const ws = new WebSocket(url, options);
+    const ws = protocols ? new WebSocket(url, protocols, rest) : new WebSocket(url, rest);
     const done = (result: { accepted: boolean; statusCode?: number }) => {
       try {
         ws.terminate();

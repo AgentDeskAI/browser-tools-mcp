@@ -20,6 +20,10 @@ export interface CliOptions {
   auditAllowedOrigins?: string[];
   /** Let audits reach any loopback/private address but the audits' own ports (not recommended). */
   auditAllowPrivateNetwork: boolean;
+  /** State-changing local API calls, without a panel confirmation. */
+  allowActions: boolean;
+  /** Only this extension may pair. Bare id or full origin. */
+  extensionId?: string;
 }
 
 export function readPackageVersion(): string {
@@ -62,6 +66,11 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     auditAllowPrivateNetwork:
       env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "true" ||
       env["BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK"] === "1",
+    allowActions:
+      env["BROWSER_TOOLS_ALLOW_ACTIONS"] === "true" || env["BROWSER_TOOLS_ALLOW_ACTIONS"] === "1",
+    ...(env["BROWSER_TOOLS_EXTENSION_ID"]
+      ? { extensionId: env["BROWSER_TOOLS_EXTENSION_ID"] }
+      : {}),
     ...(splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"])
       ? { auditAllowedOrigins: splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"]) }
       : {}),
@@ -118,6 +127,12 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
       case "--audit-allow-private-network":
         options.auditAllowPrivateNetwork = true;
         break;
+      case "--allow-actions":
+        options.allowActions = true;
+        break;
+      case "--extension-id":
+        options.extensionId = next();
+        break;
       case "--port":
         options.port = numberOrUndefined(next());
         break;
@@ -148,6 +163,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         else if (arg.startsWith("--token=")) options.token = arg.slice(8);
         else if (arg.startsWith("--screenshot-dir=")) options.screenshotDir = arg.slice(17);
         else if (arg.startsWith("--audit-allow-origin=")) addAuditOrigins(arg.slice(21));
+        else if (arg.startsWith("--extension-id=")) options.extensionId = arg.slice(15);
         break;
     }
   }
@@ -173,7 +189,9 @@ Options:
       --host <addr>        Loopback address to bind (default 127.0.0.1)
       --screenshot-dir <p> Where screenshots are written
       --only <a,b>         Expose only these tools
-      --exclude <a,b>      Hide these tools
+      --exclude <a,b>      Hide these tools (also on the local API)
+      --allow-actions      Let the local API reload, capture, wipe and change settings
+      --extension-id <id>  Only this extension may connect
       --connect <url>      Attach to a connector already running at this URL
       --token <t>          Auth token to use with --connect
       --verbose            Print each captured console and network entry as it arrives
@@ -191,7 +209,8 @@ Environment:
   BROWSER_TOOLS_TOOLS, BROWSER_TOOLS_EXCLUDE_TOOLS, BROWSER_TOOLS_TOKEN,
   BROWSER_TOOLS_STATE_DIR, BROWSER_TOOLS_LOG_LEVEL, BROWSER_TOOLS_REDACT,
   BROWSER_TOOLS_VERBOSE, BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS,
-  BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK
+  BROWSER_TOOLS_AUDIT_ALLOW_PRIVATE_NETWORK, BROWSER_TOOLS_ALLOW_ACTIONS,
+  BROWSER_TOOLS_EXTENSION_ID
 
 Available tools:
   ${ALL_TOOL_NAMES.join(", ")}

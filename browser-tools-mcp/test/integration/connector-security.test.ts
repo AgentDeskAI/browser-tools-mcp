@@ -5,6 +5,11 @@ import os from "node:os";
 import fs from "node:fs";
 import WebSocket from "ws";
 import { createConnector, type Connector } from "../../src/connector/connector";
+import {
+  EXAMPLE_CHROME_EXTENSION_ORIGIN,
+  EXAMPLE_FIREFOX_EXTENSION_ORIGIN,
+  EXAMPLE_SAFARI_EXTENSION_ORIGIN,
+} from "../../src/connector/security";
 import { tryWebSocket, TINY_PNG_BASE64, FakeExtension } from "../helpers/fake-extension";
 
 /**
@@ -18,7 +23,7 @@ let screenshotDir: string;
 
 beforeAll(async () => {
   screenshotDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-sec-"));
-  connector = await createConnector({ port: 0, screenshotDir });
+  connector = await createConnector({ port: 0, screenshotDir, allowActions: true });
 });
 
 afterAll(async () => {
@@ -107,6 +112,33 @@ describe("HTTP authentication", () => {
     expect(res.status).toBe(200);
   });
 
+  it("does not accept the token from the query string", async () => {
+    const fromQuery = await request(connector.app).get(`/api/console?token=${connector.token}`);
+    expect(fromQuery.status).toBe(401);
+    expect(fromQuery.body.code).toBe("TOKEN_IN_URL");
+
+    const both = await request(connector.app)
+      .get(`/api/console?token=${connector.token}`)
+      .set("Authorization", `Bearer ${connector.token}`);
+    expect(both.status).toBe(401);
+    expect(both.body.code).toBe("TOKEN_IN_URL");
+  });
+
+  it("pairs an extension origin and does not put the token on the identity route", async () => {
+    const identity = await request(connector.app).get("/.identity");
+    expect(JSON.stringify(identity.body)).not.toContain(connector.token);
+
+    const refused = await request(connector.app).post("/.pair");
+    expect(refused.status).toBe(403);
+
+    const paired = await request(connector.app)
+      .post("/.pair")
+      .set("Origin", EXAMPLE_CHROME_EXTENSION_ORIGIN);
+    expect(paired.status).toBe(200);
+    expect(paired.body.token).toBe(connector.token);
+    expect(paired.headers["cache-control"]).toBe("no-store");
+  });
+
   it("leaves the identity endpoint public so the extension can find the server", async () => {
     const res = await request(connector.app).get("/.identity");
     expect(res.status).toBe(200);
@@ -120,20 +152,61 @@ describe("HTTP authentication", () => {
 });
 
 describe("websocket upgrade", () => {
-  it("accepts a chrome extension origin", async () => {
-    const result = await tryWebSocket(
-      `ws://127.0.0.1:${connector.port}/extension-ws`,
-      { origin: "chrome-extension://abcdefghijklmnop" }
-    );
+  const bearer = () => ({ Authorization: `Bearer ${connector.token}` });
+
+  it("rejects a chrome extension origin that does not present the token", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
+    });
+    expect(result.accepted).toBe(false);
+  });
+
+  it("accepts a chrome extension origin that presents the token", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
+      headers: bearer(),
+    });
     expect(result.accepted).toBe(true);
   });
 
-  it("accepts a firefox extension origin", async () => {
-    const result = await tryWebSocket(
-      `ws://127.0.0.1:${connector.port}/extension-ws`,
-      { origin: "moz-extension://abcdefghijklmnop" }
-    );
+  it("accepts the token as a websocket subprotocol, which is how the extension sends it", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
+      protocols: ["browser-tools", connector.token],
+    });
     expect(result.accepted).toBe(true);
+  });
+
+  it("accepts a firefox extension origin with the token", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      origin: EXAMPLE_FIREFOX_EXTENSION_ORIGIN,
+      headers: bearer(),
+    });
+    expect(result.accepted).toBe(true);
+  });
+
+  it("accepts a safari extension origin with the token", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      origin: EXAMPLE_SAFARI_EXTENSION_ORIGIN,
+      headers: bearer(),
+    });
+    expect(result.accepted).toBe(true);
+  });
+
+  it("rejects extension origins that a browser would not assign", async () => {
+    for (const origin of [
+      "extension://abcdefghijklmnopabcdefghijklmnop",
+      "chrome-extension://abcdefghijklmnop",
+      "chrome-extension://qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      `${EXAMPLE_CHROME_EXTENSION_ORIGIN}/panel.html`,
+      "moz-extension://not-a-uuid",
+    ]) {
+      const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+        origin,
+        headers: bearer(),
+      });
+      expect(result.accepted, origin).toBe(false);
+    }
   });
 
   // The core of the old vulnerability: any visited web page could open this
@@ -161,16 +234,25 @@ describe("websocket upgrade", () => {
     expect(result.accepted).toBe(false);
   });
 
-  it("allows an originless connection that presents the token", async () => {
+  it("rejects a token carried in the URL", async () => {
     const result = await tryWebSocket(
-      `ws://127.0.0.1:${connector.port}/extension-ws?token=${connector.token}`
+      `ws://127.0.0.1:${connector.port}/extension-ws?token=${connector.token}`,
+      { headers: bearer() }
     );
+    expect(result.accepted).toBe(false);
+  });
+
+  it("allows an originless connection that presents the token", async () => {
+    const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/extension-ws`, {
+      headers: bearer(),
+    });
     expect(result.accepted).toBe(true);
   });
 
   it("rejects unknown websocket paths", async () => {
     const result = await tryWebSocket(`ws://127.0.0.1:${connector.port}/anything`, {
-      origin: "chrome-extension://abcdefghijklmnop",
+      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
+      headers: bearer(),
     });
     expect(result.accepted).toBe(false);
   });
@@ -504,7 +586,8 @@ describe("audit destination policy", () => {
     await vi.waitFor(() => expect(guarded.listTabs()).toEqual([]));
 
     const legacy = new WebSocket(`ws://127.0.0.1:${guarded.port}/extension-ws`, {
-      origin: "chrome-extension://legacyextension",
+      origin: EXAMPLE_CHROME_EXTENSION_ORIGIN,
+      headers: { Authorization: `Bearer ${guarded.token}` },
     });
     await new Promise<void>((resolve, reject) => {
       legacy.once("open", () => resolve());

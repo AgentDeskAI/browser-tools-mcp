@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.0.4
+
+Low-severity hardening of the local connector, and the test runner is now Vitest 5.
+
+- **The token is a bearer token.** The HTTP API and the extension WebSocket
+  accept it from `Authorization: Bearer` or, for the extension, a WebSocket
+  subprotocol. A token in the URL is refused. The extension collects it from
+  `POST /.pair`, which answers only a real browser-extension origin
+  (`chrome-extension://` with a Chromium id, or `moz-extension://` /
+  `safari-web-extension://` with a UUID). `/.identity` still does not include
+  it. `--extension-id` limits pairing and the extension socket to one
+  extension.
+- **`--only` and `--exclude` apply to the local API**, not only to the MCP tool
+  list. A shared connector enforces the filters it was started with.
+- **State-changing local API calls are refused by default.** Reload,
+  screenshot, wipe, settings changes and tab selection need `--allow-actions`
+  or the "Allow state-changing calls" checkbox in the BrowserTools panel.
+  Closing DevTools withdraws the confirmation. Tools in the process that
+  embeds the connector are not gated by this.
+- **1.x is unsupported.** README and SECURITY.md tell anyone still on it to
+  upgrade. The vulnerabilities fixed in 2.0 are not patched on 1.x.
+
+Vitest 5 is a dev dependency. Node 22.12 or newer is required to run the tests,
+which the existing Node 22.19 floor already satisfies.
+
 ## 2.0.3 — Security
 
 Fixes a server-side request forgery in the four Lighthouse audit tools

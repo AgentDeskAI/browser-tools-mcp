@@ -69,6 +69,9 @@
     }
 
     applySettings(bridge.getSettings());
+    if (el("allowActions")) {
+      el("allowActions").checked = Boolean(bridge.getActionsConfirmed && bridge.getActionsConfirmed());
+    }
     bridge.subscribe(renderStatus);
 
     el("save").addEventListener("click", async () => {
@@ -84,6 +87,10 @@
     el("captureMode").addEventListener("change", () =>
       void bridge.updateSettings(collectSettings())
     );
+
+    el("allowActions").addEventListener("change", () => {
+      if (bridge.setActionsConfirmed) bridge.setActionsConfirmed(el("allowActions").checked);
+    });
 
     el("cookies").addEventListener("click", async () => {
       const granted = await bridge.requestCookiePermission();

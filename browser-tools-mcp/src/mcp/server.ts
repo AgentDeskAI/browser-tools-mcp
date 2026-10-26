@@ -11,6 +11,7 @@ import {
   registerResources,
   screenshotUri,
 } from "./resources.js";
+import { resolveEnabledTools } from "../connector/api-policy.js";
 import { createLogger } from "../util/logger.js";
 import { AUDIT_CATEGORIES, type AuditCategory } from "../lighthouse/types.js";
 
@@ -762,16 +763,11 @@ export function createMcpServer(options: McpServerOptions): {
     { capabilities: { tools: {}, prompts: {}, resources: {} } }
   );
 
-  const enabled = new Set(options.enabledTools ?? ALL_TOOL_NAMES);
-  const disabled = new Set(options.disabledTools ?? []);
+  const toolFilter = resolveEnabledTools(ALL_TOOL_NAMES, options.enabledTools, options.disabledTools);
+  const selected = TOOLS.filter((tool) => toolFilter.enabled.has(tool.name));
 
-  const selected = TOOLS.filter((tool) => enabled.has(tool.name) && !disabled.has(tool.name));
-
-  const unknown = (options.enabledTools ?? []).filter(
-    (name) => !ALL_TOOL_NAMES.includes(name)
-  );
-  if (unknown.length > 0) {
-    log.warn(`Ignoring unknown tool name(s) in filter: ${unknown.join(", ")}`);
+  if (toolFilter.unknown.length > 0) {
+    log.warn(`Ignoring unknown tool name(s) in filter: ${toolFilter.unknown.join(", ")}`);
   }
 
   for (const tool of selected) tool.register(server, options.client);

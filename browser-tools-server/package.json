@@ -1,6 +1,6 @@
 {
   "name": "@agentdeskai/browser-tools-server",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Standalone connector for BrowserTools MCP. Only needed when several MCP clients must share one browser session — browser-tools-mcp now embeds this automatically.",
   "type": "module",
   "main": "index.js",
@@ -36,6 +36,6 @@
   "author": "AgentDesk AI",
   "license": "MIT",
   "dependencies": {
-    "@agentdeskai/browser-tools-mcp": "^2.0.3"
+    "@agentdeskai/browser-tools-mcp": "^2.0.4"
   }
 }

@@ -1,5 +1,10 @@
 # BrowserTools MCP
 
+**If you are still on 1.x, upgrade.** 1.x is unsupported. It has known critical
+vulnerabilities (remote code execution, unauthenticated access to captured
+data) that were fixed in 2.0 and will not be patched on 1.x. See
+[SECURITY.md](SECURITY.md) and [MIGRATION.md](MIGRATION.md).
+
 Give your AI coding agent eyes on the browser. BrowserTools MCP streams console
 output, network activity, screenshots and Lighthouse audits from **your real
 Chrome session** — the one already logged into your app — to any MCP-compatible
@@ -7,9 +12,7 @@ client: Cursor, Claude Code, Windsurf, Cline, Zed, Gemini CLI, and others.
 
 > **Version 2.0 is a rewrite.** One process instead of three, no unauthenticated
 > local server, credentials scrubbed before they leave the browser, and a real
-> test suite. If you are coming from 1.x, read [MIGRATION.md](MIGRATION.md) —
-> **and upgrade, because 1.2.x has a critical vulnerability.** See
-> [SECURITY.md](SECURITY.md).
+> test suite. Coming from 1.x? Read [MIGRATION.md](MIGRATION.md).
 
 ---
 
@@ -167,9 +170,11 @@ This tool captures whatever your browser sees, so it treats that data carefully:
 - **The extension never leaves loopback.** 1.x scanned private network ranges
   and adopted whichever host answered with a known string — meaning anyone on
   shared Wi-Fi could receive your logs and screenshots. That scan is gone.
-- **Authenticated.** The HTTP API requires a per-run token. The WebSocket
-  accepts browser-extension origins only, so a web page you visit cannot
-  impersonate the extension.
+- **Authenticated.** The HTTP API requires a per-run bearer token. A token in
+  the URL is refused. The extension WebSocket requires the same token; the
+  extension collects it from a loopback pairing route that answers only a
+  browser-extension origin, and `/.identity` does not reveal it. Pass
+  `--extension-id` to accept one extension and no others.
 - **Credentials are scrubbed** on the way in: `Authorization`, `Cookie` and
   similar headers, plus JWTs, cloud keys and vendor tokens found anywhere in
   captured strings, become `[REDACTED]`.
@@ -200,8 +205,10 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | --- | --- |
 | `--port <n>` | Connector port (default 3025) |
 | `--screenshot-dir <path>` | Where screenshots are written |
-| `--only <a,b>` | Expose only these tools |
-| `--exclude <a,b>` | Hide these tools |
+| `--only <a,b>` | Expose only these tools, on MCP and on the local API |
+| `--exclude <a,b>` | Hide these tools, on MCP and on the local API |
+| `--allow-actions` | Let the local API reload, capture, wipe, change settings and select a tab. Otherwise confirm that in the BrowserTools panel. The MCP tools in the process that embeds the connector are not gated by this |
+| `--extension-id <id>` | Only this extension may pair and connect |
 | `--doctor` | Check the setup and exit |
 | `--verbose` | Print each captured entry as it arrives |
 | `--host <addr>` | Loopback address to bind (default `127.0.0.1`) |
@@ -213,7 +220,9 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 
 To share one browser session between several MCP clients, start the connector
 once with `npx @agentdeskai/browser-tools-server` and every client will attach to
-it automatically.
+it automatically. The local API uses the `--only`, `--exclude`,
+`--allow-actions` and `--extension-id` of that process. An attached client's
+`--only` / `--exclude` still hide tools from that client.
 
 ## Known limits
 
