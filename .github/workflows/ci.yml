@@ -50,9 +50,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
 
       - name: Run end-to-end suite
-        # Loading a Manifest V3 extension needs a real browser, so the suite
-        # runs headed under a virtual display.
-        run: xvfb-run -a npm run test:e2e
+        # Chrome's new headless mode loads the extension, so no virtual
+        # display is required. HEADED=1 would open a window; CI leaves it unset.
+        run: npm run test:e2e
 
   audit:
     name: Dependency audit
