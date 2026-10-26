@@ -124,6 +124,11 @@ be, both are worth reporting.
   connector call it directly and are not gated by this.
 - No captured value reaches a shell. Screenshot names are restricted to
   `[A-Za-z0-9._/-]` and resolved inside a fixed directory.
+- Chrome's "started debugging this browser" banner is a browser safety
+  control. It is intentional, and this project never hides it, suppresses it,
+  or documents a setup step that does. Features that can run without the
+  debugger do so. When a feature attaches the debugger, the banner stays
+  visible for that attachment, and dismissing it stops the attachment.
 - Credential-bearing headers and secret-shaped strings are redacted before
   storage, not before display.
 - Request bodies are size-limited; log retention is bounded and client-supplied

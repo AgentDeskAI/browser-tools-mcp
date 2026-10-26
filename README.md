@@ -182,6 +182,10 @@ This tool captures whatever your browser sees, so it treats that data carefully:
   unless explicitly requested.
 - **Cookie access is an optional permission** you grant from the panel, not
   something the extension holds by default.
+- **The debugger banner stays visible.** Chrome's "started debugging this
+  browser" warning is a safety control. It is intentional, and this project
+  never hides it. A capture path that does not attach the debugger simply
+  does not raise the banner; that is not a way to silence it.
 - **Audits stay off your internal network.** An audit accepts a url, and the
   caller may be a model reading untrusted pages. Link-local and cloud metadata
   addresses are never audited. Pages on localhost or a private network are
@@ -236,8 +240,9 @@ it automatically. The local API uses the `--only`, `--exclude`,
   cannot fit, it is written to disk and the tool returns the path instead of
   inlining it.
 - Console capture defaults to the DevTools protocol, which makes Chrome show a
-  "started debugging this browser" banner. Switch the panel's capture mode to
-  **Wrap page console** to avoid it.
+  "started debugging this browser" banner. That banner is intentional and is
+  never hidden. Switch the panel's capture mode to **Wrap page console** to
+  capture the console without attaching the debugger.
 - **Firefox is not verified.** The extension is written cross-browser — a
   `browser`/`chrome` shim, `browser_specific_settings`, and a capture mode that
   does not need `chrome.debugger` — but it has never been loaded in Firefox, and
