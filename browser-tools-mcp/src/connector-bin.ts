@@ -45,9 +45,16 @@ async function main(): Promise<void> {
         `      --only <a,b>         Serve only these tools on the local API\n` +
         `      --exclude <a,b>      Do not serve these tools on the local API\n` +
         `      --allow-actions      Allow reload, screenshot, wipe, settings and tab select\n` +
-        `      --extension-id <id>  Only this extension may connect\n\n` +
-        `Audit settings, tool filters and --allow-actions apply to every MCP client\n` +
-        `that attaches to this connector.\n`
+        `      --extension-id <id>  Only this extension may connect\n` +
+        `      --allow-eval         Allow script evaluation. Off unless passed. No environment variable.\n` +
+        `      --allow-input        Allow click, type, navigation, and soft input. Off unless passed.\n` +
+        `                           No environment variable.\n` +
+        `      --allow-input-origins <o,o>\n` +
+        `                           http(s) origins where input and navigation are allowed besides local addresses\n` +
+        `      --exclude-origins <o,o>\n` +
+        `                           http(s) origins that are never acted on. Empty unless set.\n\n` +
+        `Audit settings, tool filters, --allow-actions and capability flags apply to every MCP\n` +
+        `client that attaches to this connector.\n`
     );
     return;
   }
@@ -65,6 +72,10 @@ async function main(): Promise<void> {
     ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
     allowActions: options.allowActions,
     ...(options.extensionId ? { extensionId: options.extensionId } : {}),
+    allowEval: options.allowEval,
+    allowInput: options.allowInput,
+    ...(options.allowInputOrigins ? { allowInputOrigins: options.allowInputOrigins } : {}),
+    ...(options.excludeOrigins ? { excludeOrigins: options.excludeOrigins } : {}),
   });
 
   writeSessionFile({

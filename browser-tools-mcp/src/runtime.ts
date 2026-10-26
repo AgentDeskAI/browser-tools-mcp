@@ -126,6 +126,13 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
           `attaching to ${where}, which keeps the audit settings it was started with.`
       );
     }
+    if (options.allowEval || options.allowInput || options.allowInputOrigins?.length || options.excludeOrigins?.length) {
+      log.warn(
+        `--allow-eval, --allow-input, --allow-input-origins, and --exclude-origins take effect only ` +
+          `in the process that starts the connector. This process is attaching to ${where}, which ` +
+          `keeps the capability settings it was started with.`
+      );
+    }
   };
 
   if (options.connectUrl) {
@@ -175,6 +182,10 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
       allowActions: options.allowActions,
       ...(options.extensionId ? { extensionId: options.extensionId } : {}),
+      allowEval: options.allowEval,
+      allowInput: options.allowInput,
+      ...(options.allowInputOrigins ? { allowInputOrigins: options.allowInputOrigins } : {}),
+      ...(options.excludeOrigins ? { excludeOrigins: options.excludeOrigins } : {}),
     });
 
     writeSessionFile({

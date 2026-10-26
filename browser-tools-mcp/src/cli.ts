@@ -24,6 +24,20 @@ export interface CliOptions {
   allowActions: boolean;
   /** Only this extension may pair. Bare id or full origin. */
   extensionId?: string;
+  /**
+   * Script evaluation. Argv only — not read from the environment — and off
+   * unless this flag is present.
+   */
+  allowEval: boolean;
+  /**
+   * Click, type, key presses, navigation, and soft input. Argv only, off
+   * unless this flag is present.
+   */
+  allowInput: boolean;
+  /** http(s) origins where input and navigation are allowed besides local addresses. */
+  allowInputOrigins?: string[];
+  /** http(s) origins that are never acted on. Empty unless set. */
+  excludeOrigins?: string[];
 }
 
 export function readPackageVersion(): string {
@@ -71,6 +85,10 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
     ...(env["BROWSER_TOOLS_EXTENSION_ID"]
       ? { extensionId: env["BROWSER_TOOLS_EXTENSION_ID"] }
       : {}),
+    // Capability flags are argv only. They are intentionally not read from the
+    // environment, so an inherited variable cannot turn them on.
+    allowEval: false,
+    allowInput: false,
     ...(splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"])
       ? { auditAllowedOrigins: splitList(env["BROWSER_TOOLS_AUDIT_ALLOW_ORIGINS"]) }
       : {}),
@@ -93,6 +111,12 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
   // Both spellings of the flag, and the variable, add to the same list.
   const addAuditOrigins = (value: string | undefined) => {
     options.auditAllowedOrigins = [...(options.auditAllowedOrigins ?? []), ...(splitList(value) ?? [])];
+  };
+  const addInputOrigins = (value: string | undefined) => {
+    options.allowInputOrigins = [...(options.allowInputOrigins ?? []), ...(splitList(value) ?? [])];
+  };
+  const addExcludeOrigins = (value: string | undefined) => {
+    options.excludeOrigins = [...(options.excludeOrigins ?? []), ...(splitList(value) ?? [])];
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -133,6 +157,18 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
       case "--extension-id":
         options.extensionId = next();
         break;
+      case "--allow-eval":
+        options.allowEval = true;
+        break;
+      case "--allow-input":
+        options.allowInput = true;
+        break;
+      case "--allow-input-origins":
+        addInputOrigins(next());
+        break;
+      case "--exclude-origins":
+        addExcludeOrigins(next());
+        break;
       case "--port":
         options.port = numberOrUndefined(next());
         break;
@@ -164,6 +200,8 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
         else if (arg.startsWith("--screenshot-dir=")) options.screenshotDir = arg.slice(17);
         else if (arg.startsWith("--audit-allow-origin=")) addAuditOrigins(arg.slice(21));
         else if (arg.startsWith("--extension-id=")) options.extensionId = arg.slice(15);
+        else if (arg.startsWith("--allow-input-origins=")) addInputOrigins(arg.slice("--allow-input-origins=".length));
+        else if (arg.startsWith("--exclude-origins=")) addExcludeOrigins(arg.slice("--exclude-origins=".length));
         break;
     }
   }
@@ -203,6 +241,14 @@ Options:
                            Let audits reach any loopback or private address, except the
                            audits' own ports (not recommended). Also needed behind a
                            fake-IP proxy (198.18.0.0/15 answers are refused otherwise)
+      --allow-eval         Allow script evaluation. Off unless passed. No environment variable.
+      --allow-input        Allow click, type, navigation, and soft input. Off unless passed.
+                           No environment variable.
+      --allow-input-origins <o,o>
+                           http(s) origins where input and navigation are allowed besides
+                           local addresses (for example https://example.com)
+      --exclude-origins <o,o>
+                           http(s) origins that are never acted on. Empty unless set.
 
 Environment:
   BROWSER_TOOLS_PORT, BROWSER_TOOLS_HOST, BROWSER_TOOLS_SCREENSHOT_DIR,
