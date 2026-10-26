@@ -3,7 +3,8 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 
-import { createConnector, type Connector } from "../../src/connector/connector";
+import { CONNECTOR_BIND_ATTEMPTS, createConnector, type Connector } from "../../src/connector/connector";
+import { holdConsecutivePorts } from "../helpers/port";
 import { HttpConnectorClient } from "../../src/mcp/client";
 import { createRuntime } from "../../src/runtime";
 import { writeSessionFile, readSessionFile } from "../../src/util/session";
@@ -364,21 +365,33 @@ describe("runtime attach behaviour", () => {
   it("stores the session file with owner-only permissions", async () => {
     const runtime = await createRuntime({ ...baseOptions, port: 0, screenshotDir });
 
-    // The file holds an auth token, so it must not be world-readable.
+    // The file holds an auth token. POSIX stores that as mode 0600. Windows
+    // does not keep owner/group/other bits: Node reports 0666 for a writable
+    // file, and chmod only toggles the write bit, which 0600 leaves set.
     const mode = fs.statSync(path.join(stateDir, "session.json")).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(mode & 0o200).toBe(0o200);
+    } else {
+      expect(mode).toBe(0o600);
+    }
 
     await runtime.close();
   });
 
   it("still produces a usable client when the connector cannot start", async () => {
-    // Port 1 is privileged, so binding fails.
-    const runtime = await createRuntime({ ...baseOptions, port: 1 });
+    // Port 1 is privileged only on POSIX, and a taken port is retried for
+    // CONNECTOR_BIND_ATTEMPTS, so hold that whole run.
+    const held = await holdConsecutivePorts(CONNECTOR_BIND_ATTEMPTS);
+    try {
+      const runtime = await createRuntime({ ...baseOptions, port: held.startPort });
 
-    expect(runtime.degradedReason).toBeTruthy();
-    // Tool calls must explain the problem rather than hang or return empties.
-    await expect(runtime.client.console({})).rejects.toThrow(/not available/i);
+      expect(runtime.degradedReason).toBeTruthy();
+      // Tool calls must explain the problem rather than hang or return empties.
+      await expect(runtime.client.console({})).rejects.toThrow(/not available/i);
 
-    await runtime.close();
+      await runtime.close();
+    } finally {
+      await held.release();
+    }
   });
 });

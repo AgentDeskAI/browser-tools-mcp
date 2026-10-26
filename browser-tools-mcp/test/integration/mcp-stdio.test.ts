@@ -4,16 +4,21 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { CONNECTOR_BIND_ATTEMPTS } from "../../src/connector/connector";
+import { holdConsecutivePorts } from "../helpers/port";
 
 const packageDir = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const entry = path.join(packageDir, "dist", "index.js");
+const tsc = path.join(packageDir, "..", "node_modules", "typescript", "lib", "tsc.js");
 
 let child: ChildProcessWithoutNullStreams | null = null;
 let stateDir: string;
 
 beforeAll(() => {
   // The stdio contract can only be verified against the real built artifact.
-  execFileSync("npx", ["tsc", "-p", path.join(packageDir, "tsconfig.json")], {
+  // Run the compiler through node: on Windows `npx` is a `.cmd` shim, and
+  // execFile does not search PATHEXT, so `npx tsc` fails with ENOENT.
+  execFileSync(process.execPath, [tsc, "-p", path.join(packageDir, "tsconfig.json")], {
     cwd: packageDir,
     stdio: "pipe",
   });
@@ -153,32 +158,39 @@ describe("stdio transport contract", () => {
   });
 
   it("keeps stdout clean even when the connector cannot bind", async () => {
+    // Port 1 is privileged only on POSIX. The connector also walks forward on
+    // EADDRINUSE, so hold the whole run it would try.
+    const held = await holdConsecutivePorts(CONNECTOR_BIND_ATTEMPTS);
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-state-"));
-    child = spawn(process.execPath, [entry], {
-      env: {
-        ...process.env,
-        BROWSER_TOOLS_STATE_DIR: stateDir,
-        // Reserved/privileged port: binding will fail.
-        BROWSER_TOOLS_PORT: "1",
-        BROWSER_TOOLS_LOG_LEVEL: "debug",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    try {
+      child = spawn(process.execPath, [entry], {
+        env: {
+          ...process.env,
+          BROWSER_TOOLS_STATE_DIR: stateDir,
+          BROWSER_TOOLS_PORT: String(held.startPort),
+          BROWSER_TOOLS_LOG_LEVEL: "debug",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
 
-    child.stdin.write(
-      rpc(1, "initialize", {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "degraded-test", version: "1.0.0" },
-      })
-    );
+      child.stdin.write(
+        rpc(1, "initialize", {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "degraded-test", version: "1.0.0" },
+        })
+      );
 
-    const { messages, stdout } = await collect(child, (m) => m.id === 1);
+      const { messages, stdout, stderr } = await collect(child, (m) => m.id === 1);
 
-    // The MCP session must still come up so the client can report the problem.
-    expect(messages.some((m) => m.id === 1)).toBe(true);
-    for (const line of stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
-      expect(() => JSON.parse(line), `stdout line was not JSON-RPC: ${line}`).not.toThrow();
+      // The MCP session must still come up so the client can report the problem.
+      expect(messages.some((m) => m.id === 1)).toBe(true);
+      expect(stderr).toMatch(/Could not start the local connector/);
+      for (const line of stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        expect(() => JSON.parse(line), `stdout line was not JSON-RPC: ${line}`).not.toThrow();
+      }
+    } finally {
+      await held.release();
     }
   });
 });
