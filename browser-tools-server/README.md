@@ -12,7 +12,10 @@ npx @agentdeskai/browser-tools-server
 ```
 
 Every `browser-tools-mcp` process started afterwards attaches to it
-automatically instead of starting its own.
+automatically instead of starting its own. This process is the one whose
+`--only` / `--exclude` the local API enforces, and whose `--allow-actions`
+(or the BrowserTools panel checkbox) permits reload, screenshot, wipe,
+settings changes and tab selection.
 
 Add `--verbose` to watch capture as it happens, which is the quickest way to
 confirm a fresh install is working:

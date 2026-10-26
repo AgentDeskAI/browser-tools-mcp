@@ -21,6 +21,8 @@
   let debuggerAttached = false;
   let injectPollTimer = null;
   let closing = false;
+  /** Panel confirmation for state-changing local API calls. Dies with this page. */
+  let actionsConfirmed = false;
 
   const consoleQueue = [];
   const networkQueue = [];
@@ -76,9 +78,27 @@
 
     serverAddress = { host: found.host, port: found.port };
 
+    let token = "";
+    try {
+      const paired = await fetch(`http://${found.host}:${found.port}/.pair`, { method: "POST" });
+      if (paired.ok) {
+        const body = await paired.json();
+        if (body && typeof body.token === "string") token = body.token;
+      }
+    } catch {
+      token = "";
+    }
+    if (!token) {
+      setState("disconnected", "The connector refused the extension connection.");
+      scheduleReconnect();
+      return;
+    }
+
     let ws;
     try {
-      ws = new WebSocket(`ws://${found.host}:${found.port}/extension-ws`);
+      // The token is a subprotocol, not part of the URL, so it does not land
+      // in an access log. `browser-tools` is the name the server selects.
+      ws = new WebSocket(`ws://${found.host}:${found.port}/extension-ws`, ["browser-tools", token]);
     } catch (error) {
       setState("disconnected", String(error));
       scheduleReconnect();
@@ -90,7 +110,8 @@
     ws.onopen = () => {
       reconnectDelayMs = 1000;
       setState("connected");
-      send({ type: "hello", extensionVersion: "2.0.0", tabId });
+      send({ type: "hello", extensionVersion: "2.0.4", tabId });
+      if (actionsConfirmed) send({ type: "actions-confirmed", confirmed: true });
       sendPageState();
       startCapture();
       // Deliver anything captured while the connection was coming up.
@@ -727,6 +748,11 @@
       panelWindow.btmcp = {
         getStatus,
         getSettings: () => ({ ...settings }),
+        getActionsConfirmed: () => actionsConfirmed,
+        setActionsConfirmed(confirmed) {
+          actionsConfirmed = Boolean(confirmed);
+          send({ type: "actions-confirmed", confirmed: actionsConfirmed });
+        },
         async updateSettings(next) {
           const previous = settings;
           settings = { ...settings, ...next };

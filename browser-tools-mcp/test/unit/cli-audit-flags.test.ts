@@ -15,6 +15,18 @@ describe("audit flags", () => {
     for (const value of ["false", "0", "", "yes"]) expect(allows(value), value).toBe(false);
   });
 
+  it("reads --allow-actions and --extension-id the same way as the other switches", () => {
+    expect(parseCli([], {}).allowActions).toBe(false);
+    expect(parseCli([], {}).extensionId).toBeUndefined();
+    expect(parseCli(["--allow-actions"], {}).allowActions).toBe(true);
+    expect(parseCli([], { BROWSER_TOOLS_ALLOW_ACTIONS: "1" }).allowActions).toBe(true);
+    expect(parseCli([], { BROWSER_TOOLS_ALLOW_ACTIONS: "yes" }).allowActions).toBe(false);
+    expect(parseCli(["--extension-id", "abcdefghijklmnopabcdefghijklmnop"], {}).extensionId).toBe(
+      "abcdefghijklmnopabcdefghijklmnop"
+    );
+    expect(parseCli(["--extension-id=abc"], {}).extensionId).toBe("abc");
+  });
+
   it("collect allowed origins from the environment and every flag spelling", () => {
     const options = parseCli(
       ["--audit-allow-origin", "http://localhost:3000,localhost:4000", "--audit-allow-origin=http://10.0.0.5:8080"],

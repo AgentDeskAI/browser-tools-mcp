@@ -7,6 +7,9 @@
 | 2.x | Yes |
 | 1.x | **No — contains known critical vulnerabilities. Upgrade immediately.** |
 
+1.x will not receive fixes. Install a 2.x release. The issues below are already
+fixed there; staying on 1.x leaves them in place.
+
 ## Reporting a vulnerability
 
 Please report privately through
@@ -101,10 +104,24 @@ be, both are worth reporting.
 - The connector binds loopback and refuses anything else without an explicit,
   documented override.
 - The HTTP API requires a bearer token generated per run and stored in a
-  `0600` file.
-- The WebSocket accepts `chrome-extension://`, `moz-extension://` and
-  `safari-web-extension://` origins. Any `http(s)` origin is rejected outright,
-  because a browser sets `Origin` itself and a page therefore cannot forge one.
+  `0600` file. The token is accepted only as an `Authorization: Bearer` header.
+  A copy of it in the query string is refused, on HTTP and on the WebSocket,
+  because URLs end up in logs.
+- The WebSocket accepts `chrome-extension://` (a 32-character Chromium id),
+  `moz-extension://` and `safari-web-extension://` (UUIDs), and it requires the
+  same bearer token an HTTP client would send. The extension reads that token
+  from `POST /.pair`, which answers only those origins; `/.identity` does not
+  include it. `--extension-id` limits pairing to one extension. Any `http(s)`
+  origin is rejected outright, because a browser sets `Origin` itself and a
+  page therefore cannot forge one.
+- `--only` and `--exclude` apply to the local HTTP API as well as to the MCP
+  tool list. On a shared connector, the filters belong to the process that
+  started it.
+- State-changing local API calls — reload, screenshot, wipe, settings and tab
+  selection — are refused unless the connector was started with
+  `--allow-actions` or the DevTools panel has confirmed them. Closing DevTools
+  withdraws the confirmation. MCP tools inside the process that embeds the
+  connector call it directly and are not gated by this.
 - No captured value reaches a shell. Screenshot names are restricted to
   `[A-Za-z0-9._/-]` and resolved inside a fixed directory.
 - Credential-bearing headers and secret-shaped strings are redacted before

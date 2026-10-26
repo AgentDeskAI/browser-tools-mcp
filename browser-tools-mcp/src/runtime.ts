@@ -171,6 +171,10 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       verbose: options.verbose,
       ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
       auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
+      ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
+      ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
+      allowActions: options.allowActions,
+      ...(options.extensionId ? { extensionId: options.extensionId } : {}),
     });
 
     writeSessionFile({

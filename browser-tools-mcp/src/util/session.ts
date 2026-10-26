@@ -65,11 +65,16 @@ export function clearSessionFile(): void {
   }
 }
 
-/** Constant-time comparison so token checks cannot be timed. */
+/**
+ * Constant-time comparison so token checks cannot be timed.
+ *
+ * Both sides are hashed first. A length mismatch used to return before the
+ * comparison, which leaks the secret's length; the digests are always the
+ * same size.
+ */
 export function tokensMatch(a: string, b: string): boolean {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+  const digestA = crypto.createHash("sha256").update(a, "utf8").digest();
+  const digestB = crypto.createHash("sha256").update(b, "utf8").digest();
+  return crypto.timingSafeEqual(digestA, digestB);
 }

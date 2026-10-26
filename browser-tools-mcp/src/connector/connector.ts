@@ -15,7 +15,17 @@ import {
   type QueryResult,
   type TabId,
 } from "./store.js";
-import { localOnlyGuard, requireToken, isExtensionOrigin, isLoopbackHost } from "./security.js";
+import { API_TOOL_NAMES, decideApiAccess, resolveEnabledTools } from "./api-policy.js";
+import {
+  WEBSOCKET_PROTOCOL,
+  bearerToken,
+  extensionOriginAllowed,
+  isAllowedHostHeader,
+  isLoopbackHost,
+  localOnlyGuard,
+  requireToken,
+  websocketProtocolTokens,
+} from "./security.js";
 import { generateToken, tokensMatch } from "../util/session.js";
 import { createLogger } from "../util/logger.js";
 import {
@@ -124,6 +134,23 @@ export interface ConnectorConfig {
   ) => Promise<AuditReport>;
   /** Injectable DNS for tests of the audit destination policy. */
   auditLookup?: (host: string) => Promise<string[]>;
+  /**
+   * When set, the local API serves only these tools. Same meaning as the MCP
+   * `--only` flag. Unknown names are ignored.
+   */
+  enabledTools?: string[];
+  /** Tools the local API will not serve. Applied after `enabledTools`. */
+  disabledTools?: string[];
+  /**
+   * Lets the local API perform state-changing calls without a panel
+   * confirmation. Off by default.
+   */
+  allowActions?: boolean;
+  /**
+   * When set, only this extension (bare id or full origin) may pair and
+   * open the extension socket. Other extension origins are refused.
+   */
+  extensionId?: string;
 }
 
 export interface TabView {
@@ -209,6 +236,8 @@ interface ExtensionConnection {
   tabId: number | string | null;
   /** The page an extension that never named its tab last reported. */
   pageUrl?: string;
+  /** Set by the DevTools panel. Dies with the socket. */
+  actionsConfirmed: boolean;
 }
 
 interface PendingRequest {
@@ -238,6 +267,12 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   }
 
   const token = config.token ?? generateToken();
+  const toolFilter = resolveEnabledTools(API_TOOL_NAMES, config.enabledTools, config.disabledTools);
+  const extensionId = config.extensionId?.trim() || undefined;
+  const allowActions = config.allowActions === true;
+  if (toolFilter.unknown.length > 0) {
+    log.warn(`Ignoring unknown tool name(s) in filter: ${toolFilter.unknown.join(", ")}`);
+  }
   const screenshotDir = path.resolve(config.screenshotDir ?? getDefaultScreenshotDir());
   const heartbeatIntervalMs = config.heartbeatIntervalMs ?? 15_000;
   const requestTimeoutMs = config.requestTimeoutMs ?? 10_000;
@@ -299,8 +334,39 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     });
   });
 
+  // The extension cannot set an Authorization header on a WebSocket, so it
+  // collects the token here and offers it as a subprotocol. A page origin is
+  // already refused by localOnlyGuard; a non-browser client has no extension
+  // origin and is refused here too. The token is not on /.identity.
+  app.post("/.pair", (req: Request, res: Response) => {
+    const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+    if (!extensionOriginAllowed(origin, extensionId)) {
+      res.status(403).json({
+        error: "Extension pairing is not accepted from this origin",
+        code: "FORBIDDEN_ORIGIN",
+      });
+      return;
+    }
+    res.set("Cache-Control", "no-store");
+    res.json({ token });
+  });
+
   const api = express.Router();
   api.use(requireToken(token));
+  api.use((req, res, next) => {
+    const decision = decideApiAccess({
+      method: req.method,
+      path: req.path,
+      query: req.query as Record<string, unknown>,
+      enabled: toolFilter.enabled,
+      actionsAllowed: allowActions || actionsConfirmed(),
+    });
+    if (!decision.ok) {
+      res.status(403).json({ error: decision.error, code: decision.code });
+      return;
+    }
+    next();
+  });
 
   api.get("/settings", (_req, res) => {
     res.json({ settings: store.settings });
@@ -503,7 +569,10 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   const server = http.createServer(app);
   server.on("error", (error) => log.error("HTTP server error:", error));
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has(WEBSOCKET_PROTOCOL) ? WEBSOCKET_PROTOCOL : false),
+  });
   wss.on("error", (error) => log.error("WebSocket server error:", error));
 
   server.on("upgrade", (req, socket: Duplex, head) => {
@@ -513,20 +582,30 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       return rejectUpgrade(socket, 404, "Not found");
     }
 
-    const origin = req.headers.origin;
-    if (origin) {
-      // A browser sets Origin itself, so a page origin here means a web page is
-      // trying to impersonate the extension.
-      if (!isExtensionOrigin(origin)) {
-        log.warn(`Rejected websocket upgrade from origin ${origin}`);
-        return rejectUpgrade(socket, 403, "Forbidden origin");
-      }
-    } else {
-      // No Origin means a non-browser client; it must prove it knows the token.
-      const presented = url.searchParams.get("token") ?? "";
-      if (!presented || !tokensMatch(presented, token)) {
-        return rejectUpgrade(socket, 401, "Unauthorized");
-      }
+    const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
+    if (!isAllowedHostHeader(hostHeader)) {
+      return rejectUpgrade(socket, 403, "Forbidden host");
+    }
+
+    const originHeader = req.headers.origin;
+    const origin = typeof originHeader === "string" ? originHeader : undefined;
+    if (Array.isArray(originHeader) || (origin && !extensionOriginAllowed(origin, extensionId))) {
+      log.warn("Rejected websocket upgrade from a non-extension origin");
+      return rejectUpgrade(socket, 403, "Forbidden origin");
+    }
+
+    // The token used to travel in the query string, which is the URL access
+    // logs keep. It is accepted from the Authorization header (non-browser
+    // clients) or a websocket subprotocol (the extension, which cannot set
+    // headers). An extension origin no longer skips the check: forging Origin
+    // was enough to be treated as the extension.
+    if (url.searchParams.has("token")) {
+      return rejectUpgrade(socket, 401, "Unauthorized");
+    }
+    const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+    const candidates = [bearerToken(authorization), ...websocketProtocolTokens(req.headers["sec-websocket-protocol"])];
+    if (!candidates.some((presented) => presented && tokensMatch(presented, token))) {
+      return rejectUpgrade(socket, 401, "Unauthorized");
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
@@ -541,6 +620,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       missedPings: 0,
       lastSeen: Date.now(),
       tabId: null,
+      actionsConfirmed: false,
     };
     connections.set(id, connection);
     log.info(`Extension connected (${connections.size} active)`);
@@ -593,6 +673,13 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   heartbeat.unref?.();
 
   // -------------------------------------------------------------- helpers
+
+  function actionsConfirmed(): boolean {
+    for (const connection of connections.values()) {
+      if (connection.actionsConfirmed) return true;
+    }
+    return false;
+  }
 
   function dropConnection(id: string): void {
     const connection = connections.get(id);
@@ -857,6 +944,11 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         if (typeof tabId === "number" || typeof tabId === "string") bindTab(connection, tabId);
         break;
       }
+      case "actions-confirmed":
+        // The panel's confirmation. It is not a capture setting, and it does
+        // not outlive this socket — closing DevTools withdraws it.
+        connection.actionsConfirmed = message["confirmed"] === true;
+        break;
       case "pong":
         connection.awaitingPong = false;
         connection.missedPings = 0;

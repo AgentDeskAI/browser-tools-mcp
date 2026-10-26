@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.AgentDeskAI/browser-tools-mcp",
   "description": "Console, network, screenshots and Lighthouse audits from your real Chrome session.",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "repository": {
     "url": "https://github.com/AgentDeskAI/browser-tools-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@agentdeskai/browser-tools-mcp",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "transport": {
         "type": "stdio"
       },

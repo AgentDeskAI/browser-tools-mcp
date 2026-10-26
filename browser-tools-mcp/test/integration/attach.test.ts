@@ -27,6 +27,8 @@ const baseOptions: CliOptions = {
   doctor: false,
   redact: true,
   standalone: false,
+  auditAllowPrivateNetwork: false,
+  allowActions: false,
 };
 
 beforeEach(async () => {
@@ -38,6 +40,7 @@ beforeEach(async () => {
     port: 0,
     screenshotDir,
     requestTimeoutMs: 3_000,
+    allowActions: true,
     // Hermetic: audit targets are resolved before the runner is called.
     auditLookup: async () => ["93.184.215.14"],
     auditRunner: async ({ url, category }) => ({
