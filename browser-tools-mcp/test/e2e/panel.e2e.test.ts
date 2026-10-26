@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { browserAvailability } from "../helpers/browser-available";
+import { e2eChromiumOptions } from "../helpers/e2e-chromium";
 import { chromium, type BrowserContext, type Page } from "playwright";
 
 /**
@@ -95,15 +96,15 @@ function unpackedExtensionId(absolutePath: string): string {
 
 beforeAll(async () => {
   userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "bt-panel-profile-"));
+  // Headless unless HEADED=1. See e2e-chromium.ts.
   context = await chromium.launchPersistentContext(userDataDir, {
     ...browserSupport.launchOptions,
-    headless: false,
-    args: [
+    ...e2eChromiumOptions([
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
       "--no-first-run",
       "--no-default-browser-check",
-    ],
+    ]),
   });
   extensionId = unpackedExtensionId(extensionPath);
 

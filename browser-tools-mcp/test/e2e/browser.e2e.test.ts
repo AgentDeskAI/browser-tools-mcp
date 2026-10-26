@@ -4,6 +4,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { browserAvailability } from "../helpers/browser-available";
+import { e2eChromiumOptions } from "../helpers/e2e-chromium";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -74,11 +75,11 @@ beforeAll(async () => {
     process.env["CHROME_PATH"] = chromium.executablePath();
   }
 
+  // Headless unless HEADED=1. See e2e-chromium.ts.
   context = await chromium.launchPersistentContext(userDataDir, {
     ...browserSupport.launchOptions,
-    headless: false,
     viewport: { width: 1280, height: 800 },
-    args: [
+    ...e2eChromiumOptions([
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
       // Loads the extension's devtools page, where all capture logic lives.
@@ -86,7 +87,7 @@ beforeAll(async () => {
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-background-timer-throttling",
-    ],
+    ]),
   });
 }, 240_000);
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { browserAvailability } from "../helpers/browser-available";
+import { e2eChromiumOptions } from "../helpers/e2e-chromium";
 import { chromium, type Browser, type Page } from "playwright";
 
 import { startFixtureServer, type FixtureServer } from "../fixtures/server";
@@ -43,7 +44,11 @@ beforeAll(async () => {
   expect(INJECT_DRAIN).toContain("__btmcpBuffer");
 
   fixture = await startFixtureServer();
-  browser = await chromium.launch({ headless: true, ...browserSupport.launchOptions });
+  // Headless unless HEADED=1. See e2e-chromium.ts.
+  browser = await chromium.launch({
+    ...browserSupport.launchOptions,
+    ...e2eChromiumOptions(),
+  });
 }, 120_000);
 
 afterAll(async () => {

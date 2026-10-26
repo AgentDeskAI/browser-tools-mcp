@@ -260,12 +260,13 @@ it automatically. The local API uses the `--only`, `--exclude`,
 npm install
 npm run build
 npm test           # unit + integration, no browser required
-npm run test:e2e   # real Chromium with the extension loaded
+npm run test:e2e   # real Chromium with the extension loaded (headless)
 ```
 
-`npm test` runs in seconds. The end-to-end suite launches a headed Chromium with
-the extension installed, drives fixture pages, and asserts the whole capture
-path — run `npx playwright install chromium` first.
+`npm test` runs in seconds. The end-to-end suite launches Chromium with the
+extension installed, drives fixture pages, and asserts the whole capture path.
+It runs headless; set `HEADED=1` to open a visible window. Run
+`npx playwright install chromium` first.
 
 ## License
 
