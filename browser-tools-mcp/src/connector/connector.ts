@@ -72,6 +72,19 @@ import {
   restrictedPageFromExtensionError,
   RestrictedPageError,
 } from "../restricted-page.js";
+import type {
+  ChromeNavigateResult,
+  ChromeTabListing,
+  ChromeTabRead,
+  SoftInputResult,
+} from "../tabs/contract.js";
+import {
+  assertTabActionSafe,
+  normalizeChromeTabListing,
+  parseChromeNavigate,
+  parseChromeTabRead,
+  parseSoftInput,
+} from "../tabs/listing.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
 export const SERVER_VERSION = "2.0.0";
@@ -257,8 +270,20 @@ export interface Connector {
    */
   checkCapability(
     action: CapabilityAction,
-    options?: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean }
+    options?: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean; creatingTab?: boolean }
   ): Promise<CapabilityCheck>;
+  /** Tabs chrome.tabs returns. Not the DevTools-connected list from listTabs(). */
+  listChromeTabs(): Promise<ChromeTabListing>;
+  readChromeTab(options: { chromeTabId: number }): Promise<ChromeTabRead>;
+  /** Background navigate by chrome.tabs id, or a new background tab when chromeTabId is omitted. */
+  navigateChromeTab(options: { url: string; chromeTabId?: number }): Promise<ChromeNavigateResult>;
+  softClickChromeTab(options: { chromeTabId: number; selector: string }): Promise<SoftInputResult>;
+  softTypeChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+    text: string;
+    submit?: boolean;
+  }): Promise<SoftInputResult>;
   close(): Promise<void>;
 }
 
@@ -267,6 +292,7 @@ export interface CapabilityCheck {
   action: string;
   reason: string;
   liveUrl: string | null;
+  excludeOrigins: string[];
 }
 
 interface ExtensionConnection {
@@ -570,6 +596,82 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     try {
       await refreshTab(req.body?.tabId !== undefined ? { tabId: req.body.tabId } : {});
       res.json({ ok: true });
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.get("/chrome-tabs", async (_req, res) => {
+    try {
+      res.json(await listChromeTabs());
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.post("/chrome-tabs/read", async (req: Request, res: Response) => {
+    try {
+      const chromeTabId = req.body?.chromeTabId;
+      if (typeof chromeTabId !== "number") {
+        res.status(400).json({ error: "chromeTabId is required" });
+        return;
+      }
+      res.json(await readChromeTab({ chromeTabId }));
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.post("/chrome-tabs/navigate", async (req: Request, res: Response) => {
+    try {
+      const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+      if (!url) {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+      const chromeTabId = req.body?.chromeTabId;
+      res.json(
+        await navigateChromeTab({
+          url,
+          ...(typeof chromeTabId === "number" ? { chromeTabId } : {}),
+        })
+      );
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.post("/chrome-tabs/soft-click", async (req: Request, res: Response) => {
+    try {
+      const chromeTabId = req.body?.chromeTabId;
+      const selector = req.body?.selector;
+      if (typeof chromeTabId !== "number" || typeof selector !== "string") {
+        res.status(400).json({ error: "chromeTabId and selector are required" });
+        return;
+      }
+      res.json(await softClickChromeTab({ chromeTabId, selector }));
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.post("/chrome-tabs/soft-type", async (req: Request, res: Response) => {
+    try {
+      const chromeTabId = req.body?.chromeTabId;
+      const selector = req.body?.selector;
+      const text = req.body?.text;
+      if (typeof chromeTabId !== "number" || typeof selector !== "string" || typeof text !== "string") {
+        res.status(400).json({ error: "chromeTabId, selector, and text are required" });
+        return;
+      }
+      res.json(
+        await softTypeChromeTab({
+          chromeTabId,
+          selector,
+          text,
+          submit: req.body?.submit === true,
+        })
+      );
     } catch (error) {
       respondWithError(res, error);
     }
@@ -1048,6 +1150,16 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           connection.role = "worker";
           connection.tabId = null;
           if (connection.pendingPopup !== undefined) popupEnabled = connection.pendingPopup;
+          // A restarted service worker opens a second socket. Keep the new one.
+          for (const other of [...connections.values()]) {
+            if (other !== connection && other.role === "worker") {
+              try {
+                other.ws.close();
+              } catch {
+                /* already gone */
+              }
+            }
+          }
           break;
         }
         connection.role = "devtools";
@@ -1110,6 +1222,10 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "screenshot-result":
       case "refresh-result":
       case "navigate-result":
+      case "navigate-chrome-result":
+      case "chrome-tabs-result":
+      case "chrome-tab-read-result":
+      case "soft-input-result":
       case "storage-result":
       case "capability-probe-result":
         resolvePending(connection, message);
@@ -1540,21 +1656,29 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   }
 
   function workerConnection(): ExtensionConnection | undefined {
-    return [...connections.values()].find(
+    const workers = [...connections.values()].filter(
       (connection) =>
         connection.role === "worker" &&
         connection.fromExtension &&
         connection.ws.readyState === WebSocket.OPEN
     );
+    workers.sort((a, b) => b.lastSeen - a.lastSeen);
+    return workers[0];
   }
 
   function denyCheck(action: string, reason: string): CapabilityCheck {
-    return { allowed: false, action, reason, liveUrl: null };
+    return {
+      allowed: false,
+      action,
+      reason,
+      liveUrl: null,
+      excludeOrigins: capabilityPolicy.excludeOrigins,
+    };
   }
 
   async function checkCapability(
     action: CapabilityAction,
-    options: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean } = {}
+    options: { tabId?: TabId; destinationUrl?: string; hideBanner?: boolean; creatingTab?: boolean } = {}
   ): Promise<CapabilityCheck> {
     if (options.hideBanner === true) return denyCheck(action, GateReason.banner);
     if (excludeListInvalid) return denyCheck(action, GateReason.excludeInvalid);
@@ -1598,18 +1722,103 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     if (needsPopup && !probePopup) return denyCheck(action, GateReason.popupOff);
     if (needsPanel && !probePanel) return denyCheck(action, GateReason.panelOff);
 
+    const excludeOrigins = [
+      ...new Set([...capabilityPolicy.excludeOrigins, ...normalizedExclude.origins]),
+    ];
     const decision = decideCapability(action, {
       policy: {
         ...capabilityPolicy,
-        excludeOrigins: [...new Set([...capabilityPolicy.excludeOrigins, ...normalizedExclude.origins])],
+        excludeOrigins,
       },
       popupEnabled: probePopup,
       panelEnabled: probePanel,
       liveUrl,
       destinationUrl: options.destinationUrl ?? null,
+      creatingTab: options.creatingTab === true,
     });
 
-    return { allowed: decision.allowed, action, reason: decision.reason, liveUrl };
+    return { allowed: decision.allowed, action, reason: decision.reason, liveUrl, excludeOrigins };
+  }
+
+  function requireWorker(): ExtensionConnection {
+    const worker = workerConnection();
+    if (!worker) {
+      throw new ExtensionRequestError(
+        "The extension service worker is not connected. Reload the extension or restart the browser, then try again."
+      );
+    }
+    return worker;
+  }
+
+  async function listChromeTabs(): Promise<ChromeTabListing> {
+    const gate = await checkCapability("listTabs");
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "list-chrome-tabs", {});
+    assertTabActionSafe(response);
+    return normalizeChromeTabListing(response, { ...capabilityPolicy, excludeOrigins: gate.excludeOrigins });
+  }
+
+  async function readChromeTab(options: { chromeTabId: number }): Promise<ChromeTabRead> {
+    const gate = await checkCapability("readTab", { tabId: options.chromeTabId });
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "read-chrome-tab", {
+      chromeTabId: options.chromeTabId,
+      approvedUrl: gate.liveUrl,
+    });
+    assertTabActionSafe(response);
+    return parseChromeTabRead(options.chromeTabId, response["read"]);
+  }
+
+  async function navigateChromeTab(options: {
+    url: string;
+    chromeTabId?: number;
+  }): Promise<ChromeNavigateResult> {
+    const requestedUrl = parseHttpUrl(options.url.trim()).href;
+    const creating = options.chromeTabId == null;
+    const gate = await checkCapability("navigate", {
+      destinationUrl: requestedUrl,
+      ...(creating ? { creatingTab: true } : { tabId: options.chromeTabId }),
+    });
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "navigate-chrome-tab", {
+      url: requestedUrl,
+      ...(creating
+        ? { create: true }
+        : { chromeTabId: options.chromeTabId, approvedUrl: gate.liveUrl }),
+    });
+    return parseChromeNavigate(requestedUrl, response);
+  }
+
+  async function softClickChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+  }): Promise<SoftInputResult> {
+    return softInput("softClick", options);
+  }
+
+  async function softTypeChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+    text: string;
+    submit?: boolean;
+  }): Promise<SoftInputResult> {
+    return softInput("softType", options);
+  }
+
+  async function softInput(
+    action: "softClick" | "softType",
+    options: { chromeTabId: number; selector: string; text?: string; submit?: boolean }
+  ): Promise<SoftInputResult> {
+    const gate = await checkCapability(action, { tabId: options.chromeTabId });
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "soft-input", {
+      op: action === "softType" ? "type" : "click",
+      chromeTabId: options.chromeTabId,
+      selector: options.selector,
+      approvedUrl: gate.liveUrl,
+      ...(action === "softType" ? { text: options.text ?? "", submit: options.submit === true } : {}),
+    });
+    return parseSoftInput(options.chromeTabId, response);
   }
 
   async function close(): Promise<void> {
@@ -1661,6 +1870,11 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     captureScreenshot,
     refreshTab,
     navigateTab,
+    listChromeTabs,
+    readChromeTab,
+    navigateChromeTab,
+    softClickChromeTab,
+    softTypeChromeTab,
     readStorage,
     runAudit,
     close,

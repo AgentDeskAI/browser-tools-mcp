@@ -20,6 +20,13 @@ import {
   RestrictedPageError,
   restrictedPageToolText,
 } from "../restricted-page.js";
+import {
+  DEVTOOLS_TAB_ID,
+  DEVTOOLS_TAB_INPUT,
+  LIST_BROWSER_TABS_DESCRIPTION,
+  NAVIGATE_BROWSER_DESCRIPTION,
+} from "../tabs/contract.js";
+import { TAB_TOOLS } from "../tabs/tools.js";
 
 const log = createLogger("mcp");
 
@@ -144,7 +151,9 @@ const queryOutputShape = {
   tabId: z
     .union([z.number(), z.string()])
     .nullable()
-    .describe("The tab these entries came from, or null when reading every tab"),
+    .describe(
+      "DevTools-connected tab id these entries came from, or null when reading every connected tab. Not a chromeTabId from listTabs."
+    ),
   url: z.string().describe("The page that tab is on"),
   otherTabs: z
     .number()
@@ -160,11 +169,7 @@ const queryOutputShape = {
 const tabIdInput = z
   .union([z.number().int(), z.string()])
   .optional()
-  .describe(
-    "Which browser tab to use, from listBrowserTabs. Omit to use the current tab — the " +
-      "one DevTools was most recently opened on, which is right in almost every session. " +
-      "Only pass this when a result reported otherTabs above 0 and you need a specific tab."
-  );
+  .describe(DEVTOOLS_TAB_INPUT);
 
 const allTabsInput = z
   .boolean()
@@ -264,26 +269,22 @@ function auditTool(
 }
 
 const TOOLS: ToolDefinition[] = [
+  ...TAB_TOOLS,
   {
     name: "listBrowserTabs",
     register(server, client) {
       server.registerTool(
         "listBrowserTabs",
         {
-          title: "List browser tabs",
-          description:
-            "Every browser tab that currently has DevTools open, with the tabId you can pass to any other tool. " +
-            "Call this when a result reported otherTabs above 0, or when the user mentions a page other than the one you have been reading. " +
-            "The tab marked isCurrent is the one every other tool uses when you do not pass tabId. " +
-            "A tab on chrome://, DevTools, view-source, the Chrome Web Store, an extension page, or the PDF viewer " +
-            `is metadata only (access "metadata-only", "${RESTRICTED_PAGE_MESSAGE}") and cannot be scripted.`,
+          title: "List DevTools-connected tabs",
+          description: LIST_BROWSER_TABS_DESCRIPTION,
           outputSchema: {
             tabs: z.array(z.record(z.string(), z.unknown())),
-            currentTabId: z.union([z.number(), z.string()]).nullable(),
+            currentTabId: z.union([z.number(), z.string()]).nullable().describe(DEVTOOLS_TAB_ID),
             connectedTabs: z.number().int(),
           },
           annotations: {
-            title: "List browser tabs",
+            title: "List DevTools-connected tabs",
             readOnlyHint: true,
             destructiveHint: false,
             idempotentHint: true,
@@ -627,26 +628,20 @@ const TOOLS: ToolDefinition[] = [
       server.registerTool(
         "navigateBrowser",
         {
-          title: "Navigate to a URL",
-          description:
-            "Loads a URL in the chosen browser tab without focusing it or attaching the debugger. " +
-            "Uses the tabId from listBrowserTabs. Requires the extension service worker, the popup " +
-            "switch, and --allow-input on browser-tools-mcp (browser-tools CLI: --allow-actions). " +
-            "chrome://, DevTools, view-source, the Chrome Web Store, and extension pages are refused. " +
-            "An http(s) PDF may load, then the tool fails because the viewer cannot be scripted. " +
-            `The error text is JSON with access "metadata-only" and message "${RESTRICTED_PAGE_MESSAGE}".`,
+          title: "Navigate a DevTools-connected tab",
+          description: NAVIGATE_BROWSER_DESCRIPTION,
           inputSchema: {
             url: z.string().describe("http(s) URL to load in the tab"),
             tabId: tabIdInput,
           },
           outputSchema: {
-            tabId: z.union([z.number(), z.string()]),
+            tabId: z.union([z.number(), z.string()]).describe(DEVTOOLS_TAB_ID),
             requestedUrl: z.string(),
             finalUrl: z.string(),
             wasDiscarded: z.boolean(),
           },
           annotations: {
-            title: "Navigate to a URL",
+            title: "Navigate a DevTools-connected tab",
             readOnlyHint: false,
             destructiveHint: false,
             idempotentHint: false,

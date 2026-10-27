@@ -52,6 +52,9 @@ var BTMCP_GATES = (function () {
     if (input.action === "listTabs") {
       return { allowed: true, reason: "allowed" };
     }
+    if (input.action === "navigate" && input.creatingTab === true) {
+      return { allowed: true, reason: "allowed" };
+    }
     var liveOrigin = originOf(input.liveUrl);
     var approvedOrigin = originOf(input.approvedUrl);
     if (!liveOrigin || !approvedOrigin) {

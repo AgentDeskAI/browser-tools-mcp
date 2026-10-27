@@ -34,6 +34,11 @@ const AUDIT_TOOL: Record<AuditCategory, string> = {
  * a unit test, so a new tool cannot skip the filter by accident.
  */
 export const API_TOOL_NAMES: readonly string[] = [
+  "listTabs",
+  "readTab",
+  "navigateTab",
+  "softClick",
+  "softType",
   "listBrowserTabs",
   "getConsoleLogs",
   "getConsoleErrors",
@@ -97,6 +102,11 @@ function toolsForRequest(method: string, path: string, query: Record<string, unk
   if (method === "GET" && path === "/page") return ["getPageInfo"];
   if (method === "GET" && path === "/status") return ["getConnectionStatus"];
   if (method === "GET" && path === "/tabs") return ["listBrowserTabs"];
+  if (method === "GET" && path === "/chrome-tabs") return ["listTabs"];
+  if (method === "POST" && path === "/chrome-tabs/read") return ["readTab"];
+  if (method === "POST" && path === "/chrome-tabs/navigate") return ["navigateTab"];
+  if (method === "POST" && path === "/chrome-tabs/soft-click") return ["softClick"];
+  if (method === "POST" && path === "/chrome-tabs/soft-type") return ["softType"];
   if (method === "POST" && path === "/screenshot") return ["takeScreenshot"];
   if (method === "POST" && path === "/refresh") return ["refreshBrowser"];
   if (method === "POST" && path === "/navigate") return ["navigateBrowser"];
@@ -135,6 +145,9 @@ export function isStateChangingRequest(method: string, path: string): boolean {
       path === "/screenshot" ||
       path === "/refresh" ||
       path === "/navigate" ||
+      path === "/chrome-tabs/navigate" ||
+      path === "/chrome-tabs/soft-click" ||
+      path === "/chrome-tabs/soft-type" ||
       path === "/settings" ||
       path === "/tabs/select")
   );

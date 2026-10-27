@@ -12,6 +12,7 @@
   var api = typeof globalThis.browser !== "undefined" ? globalThis.browser : globalThis.chrome;
   var allow = document.getElementById("allowPageActions");
   var exclude = document.getElementById("excludeOrigins");
+  var grant = document.getElementById("grantHostAccess");
   var saved = document.getElementById("saved");
 
   function storageGet(area, key) {
@@ -85,6 +86,21 @@
           : "Origins need an http or https scheme. The others were not saved.";
       await notifyWorker();
     });
+
+    if (grant) {
+      grant.addEventListener("click", function () {
+        var request = api.permissions.request({ origins: ["<all_urls>"] });
+        Promise.resolve(request)
+          .then(function (granted) {
+            saved.textContent = granted
+              ? "Host access granted for open pages."
+              : "Host access was not granted.";
+          })
+          .catch(function () {
+            saved.textContent = "Host access was not granted.";
+          });
+      });
+    }
 
     document.documentElement.dataset.ready = "true";
   }

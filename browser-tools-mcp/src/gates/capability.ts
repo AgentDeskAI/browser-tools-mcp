@@ -86,6 +86,11 @@ export interface GateContext {
   liveUrl?: string | null;
   /** Navigate target. Held to the same allowlist as the live tab. */
   destinationUrl?: string | null;
+  /**
+   * Opening a new background tab. There is no live page yet, so only the
+   * destination is checked. Updating an existing tab still checks both.
+   */
+  creatingTab?: boolean;
   /** Always refused. There is no supported way to hide the debugging banner. */
   hideBanner?: boolean;
 }
@@ -254,6 +259,16 @@ export function decideCapability(action: string, context: GateContext): GateDeci
   if (needsEval && context.policy.allowEval !== true) return deny(GateReason.evalOff);
 
   if (action === "listTabs") return { allowed: true, reason: GateReason.allowed };
+
+  if (action === "navigate" && context.creatingTab === true) {
+    // A new background tab has no live page. Restricted destinations are still
+    // refused, except an http(s) PDF, which may load and is reported afterwards.
+    if (restrictedPage(context.destinationUrl) && !loadsWithoutScripting(context.destinationUrl)) {
+      return deny(GateReason.restricted);
+    }
+    const destination = inputUrlPermitted(context.destinationUrl, context.policy, "destination");
+    return destination.permitted ? { allowed: true, reason: GateReason.allowed } : deny(destination.reason);
+  }
 
   if (action === "readTab") {
     if (restrictedPage(context.liveUrl)) return deny(GateReason.restricted);

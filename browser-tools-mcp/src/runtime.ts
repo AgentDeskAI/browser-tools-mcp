@@ -72,6 +72,21 @@ class UnavailableConnectorClient implements ConnectorClient {
   navigate(): Promise<never> {
     return this.#fail();
   }
+  listChromeTabs(): Promise<never> {
+    return this.#fail();
+  }
+  readChromeTab(): Promise<never> {
+    return this.#fail();
+  }
+  navigateChromeTab(): Promise<never> {
+    return this.#fail();
+  }
+  softClickChromeTab(): Promise<never> {
+    return this.#fail();
+  }
+  softTypeChromeTab(): Promise<never> {
+    return this.#fail();
+  }
   storage(): Promise<never> {
     return this.#fail();
   }
