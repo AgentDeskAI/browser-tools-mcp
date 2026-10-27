@@ -69,6 +69,9 @@ class UnavailableConnectorClient implements ConnectorClient {
   refresh(): Promise<never> {
     return this.#fail();
   }
+  navigate(): Promise<never> {
+    return this.#fail();
+  }
   storage(): Promise<never> {
     return this.#fail();
   }
@@ -178,14 +181,13 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       verbose: options.verbose,
       ...(options.auditAllowedOrigins ? { auditAllowedOrigins: options.auditAllowedOrigins } : {}),
       auditAllowPrivateNetwork: options.auditAllowPrivateNetwork,
-      ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
-      ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
-      allowActions: options.allowActions,
-      ...(options.extensionId ? { extensionId: options.extensionId } : {}),
       allowEval: options.allowEval,
       allowInput: options.allowInput,
       ...(options.allowInputOrigins ? { allowInputOrigins: options.allowInputOrigins } : {}),
       ...(options.excludeOrigins ? { excludeOrigins: options.excludeOrigins } : {}),
+      ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
+      ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
+      ...(options.extensionId ? { extensionId: options.extensionId } : {}),
     });
 
     writeSessionFile({

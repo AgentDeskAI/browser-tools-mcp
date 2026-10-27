@@ -109,11 +109,11 @@ describe("extension confirmBeforeAct", () => {
 describe("worker probe", () => {
   const worker = fs.readFileSync(path.join(extensionDir, "worker.js"), "utf8");
 
-  it("reads the tab itself and does not perform page actions or hide the banner", () => {
+  it("reads tabs for probes and navigate without the debugger or focus changes", () => {
     expect(worker).toContain("tabs.get");
-    expect(worker).not.toContain("message.url");
+    expect(worker).toContain("navigate-tab");
+    expect(worker).toMatch(/tabs\.update\([^)]*active:\s*false/);
     expect(worker).not.toMatch(/chrome\.debugger|api\.debugger|\.attach\(/);
-    expect(worker).not.toContain("tabs.update");
     expect(worker).not.toContain("windows.update");
     expect(worker).not.toContain("executeScript");
     expect(worker).not.toContain("silent-debugger");

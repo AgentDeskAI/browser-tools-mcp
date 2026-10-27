@@ -7,7 +7,7 @@ import { CONNECTOR_BIND_ATTEMPTS, createConnector, type Connector } from "../../
 import { holdConsecutivePorts } from "../helpers/port";
 import { HttpConnectorClient } from "../../src/mcp/client";
 import { createRuntime } from "../../src/runtime";
-import { writeSessionFile, readSessionFile } from "../../src/util/session";
+import { writeSessionFile, readSessionFile, clearSessionFile } from "../../src/util/session";
 import { FakeExtension, TINY_PNG_BASE64 } from "../helpers/fake-extension";
 import type { CliOptions } from "../../src/cli";
 
@@ -28,7 +28,8 @@ const baseOptions: CliOptions = {
   redact: true,
   standalone: false,
   auditAllowPrivateNetwork: false,
-  allowActions: false,
+  allowEval: false,
+  allowInput: false,
 };
 
 beforeEach(async () => {
@@ -40,7 +41,7 @@ beforeEach(async () => {
     port: 0,
     screenshotDir,
     requestTimeoutMs: 3_000,
-    allowActions: true,
+    allowInput: true,
     // Hermetic: audit targets are resolved before the runner is called.
     auditLookup: async () => ["93.184.215.14"],
     auditRunner: async ({ url, category }) => ({
@@ -386,6 +387,7 @@ describe("runtime attach behaviour", () => {
     // CONNECTOR_BIND_ATTEMPTS, so hold that whole run.
     const held = await holdConsecutivePorts(CONNECTOR_BIND_ATTEMPTS);
     try {
+      clearSessionFile();
       const runtime = await createRuntime({ ...baseOptions, port: held.startPort });
 
       expect(runtime.degradedReason).toBeTruthy();

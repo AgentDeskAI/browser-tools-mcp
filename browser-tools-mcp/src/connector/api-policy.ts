@@ -44,6 +44,7 @@ export const API_TOOL_NAMES: readonly string[] = [
   "getConnectionStatus",
   "takeScreenshot",
   "refreshBrowser",
+  "navigateBrowser",
   "getBrowserStorage",
   "wipeLogs",
   ...AUDIT_CATEGORIES.map((category) => AUDIT_TOOL[category]),
@@ -59,7 +60,8 @@ export interface ApiDecision {
 
 const TOOL_DISABLED = "This call is not enabled (--only / --exclude).";
 const ACTION_NOT_CONFIRMED =
-  "State-changing calls need --allow-actions, or confirmation in the BrowserTools panel.";
+  "State-changing calls need --allow-input on the connector (browser-tools CLI: --allow-actions), " +
+  "or confirmation in the BrowserTools panel.";
 
 function truthyFlag(value: unknown): boolean {
   if (value === true) return true;
@@ -97,6 +99,7 @@ function toolsForRequest(method: string, path: string, query: Record<string, unk
   if (method === "GET" && path === "/tabs") return ["listBrowserTabs"];
   if (method === "POST" && path === "/screenshot") return ["takeScreenshot"];
   if (method === "POST" && path === "/refresh") return ["refreshBrowser"];
+  if (method === "POST" && path === "/navigate") return ["navigateBrowser"];
   if (method === "POST" && path === "/storage") return ["getBrowserStorage"];
   if (method === "POST" && path === "/wipe") return ["wipeLogs"];
   if (method === "GET" && path === "/export/console") return ["getConsoleLogs", "getConsoleErrors"];
@@ -131,6 +134,7 @@ export function isStateChangingRequest(method: string, path: string): boolean {
     (path === "/wipe" ||
       path === "/screenshot" ||
       path === "/refresh" ||
+      path === "/navigate" ||
       path === "/settings" ||
       path === "/tabs/select")
   );

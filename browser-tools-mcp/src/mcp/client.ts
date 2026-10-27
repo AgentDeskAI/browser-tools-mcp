@@ -40,6 +40,13 @@ export interface ConnectorStatus {
   counts: { console: number; network: number };
 }
 
+export interface NavigateResult {
+  tabId: TabId;
+  requestedUrl: string;
+  finalUrl: string;
+  wasDiscarded: boolean;
+}
+
 export interface ScreenshotResult {
   path: string;
   tabId?: TabId | null;
@@ -68,6 +75,7 @@ export interface ConnectorClient {
   wipe(options?: { tabId?: TabId }): Promise<void>;
   screenshot(options: { name?: string; tabId?: TabId }): Promise<ScreenshotResult>;
   refresh(options?: { tabId?: TabId }): Promise<void>;
+  navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult>;
   storage(kinds: string[], options?: { tabId?: TabId }): Promise<Record<string, unknown>>;
   audit(
     category: AuditCategory,
@@ -145,6 +153,10 @@ export class InProcessConnectorClient implements ConnectorClient {
 
   async refresh(options: { tabId?: TabId } = {}): Promise<void> {
     return this.#connector.refreshTab(options);
+  }
+
+  async navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult> {
+    return this.#connector.navigateTab(options);
   }
 
   async storage(
@@ -267,6 +279,10 @@ export class HttpConnectorClient implements ConnectorClient {
 
   async refresh(options: { tabId?: TabId } = {}): Promise<void> {
     await this.#request("/api/refresh", { method: "POST", body: options });
+  }
+
+  navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult> {
+    return this.#request("/api/navigate", { method: "POST", body: options });
   }
 
   async storage(

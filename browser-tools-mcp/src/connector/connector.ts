@@ -15,18 +15,16 @@ import {
   type QueryResult,
   type TabId,
 } from "./store.js";
-import { API_TOOL_NAMES, decideApiAccess, resolveEnabledTools } from "./api-policy.js";
 import {
-  WEBSOCKET_PROTOCOL,
   bearerToken,
   extensionOriginAllowed,
-  isExtensionOrigin,
-  isAllowedHostHeader,
-  isLoopbackHost,
   localOnlyGuard,
   requireToken,
+  isExtensionOrigin,
+  isLoopbackHost,
   websocketProtocolTokens,
 } from "./security.js";
+import { API_TOOL_NAMES, decideApiAccess, resolveEnabledTools } from "./api-policy.js";
 import { generateToken, tokensMatch } from "../util/session.js";
 import { createLogger } from "../util/logger.js";
 import {
@@ -70,6 +68,8 @@ import {
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
 export const SERVER_VERSION = "2.0.0";
+/** How many consecutive ports `listen()` tries before giving up. */
+export const CONNECTOR_BIND_ATTEMPTS = 11;
 
 const log = createLogger("connector");
 
@@ -145,23 +145,6 @@ export interface ConnectorConfig {
   ) => Promise<AuditReport>;
   /** Injectable DNS for tests of the audit destination policy. */
   auditLookup?: (host: string) => Promise<string[]>;
-  /**
-   * When set, the local API serves only these tools. Same meaning as the MCP
-   * `--only` flag. Unknown names are ignored.
-   */
-  enabledTools?: string[];
-  /** Tools the local API will not serve. Applied after `enabledTools`. */
-  disabledTools?: string[];
-  /**
-   * Lets the local API perform state-changing calls without a panel
-   * confirmation. Off by default.
-   */
-  allowActions?: boolean;
-  /**
-   * When set, only this extension (bare id or full origin) may pair and
-   * open the extension socket. Other extension origins are refused.
-   */
-  extensionId?: string;
   /** Script evaluation. Off unless the process was started with --allow-eval. */
   allowEval?: boolean;
   /** Click, type, navigation, and soft input. Off unless started with --allow-input. */
@@ -170,6 +153,11 @@ export interface ConnectorConfig {
   allowInputOrigins?: string[];
   /** http(s) origins that are never acted on. Empty unless set. */
   excludeOrigins?: string[];
+  /** Same meaning as MCP `--only` / `--exclude`. Unknown names are ignored. */
+  enabledTools?: string[];
+  disabledTools?: string[];
+  /** When set, only this extension (bare id or full origin) may pair. */
+  extensionId?: string;
 }
 
 export interface TabView {
@@ -238,6 +226,12 @@ export interface Connector {
   readArtifact(kind: "screenshot" | "audit", name: string): Promise<Artifact>;
   captureScreenshot(options?: { name?: string; tabId?: TabId }): Promise<ScreenshotCapture>;
   refreshTab(options?: { tabId?: TabId }): Promise<void>;
+  navigateTab(options: { url: string; tabId?: TabId }): Promise<{
+    tabId: TabId;
+    requestedUrl: string;
+    finalUrl: string;
+    wasDiscarded: boolean;
+  }>;
   readStorage(kinds: string[], options?: { tabId?: TabId }): Promise<Record<string, unknown>>;
   runAudit(
     category: AuditCategory,
@@ -271,8 +265,6 @@ interface ExtensionConnection {
   tabId: number | string | null;
   /** The page an extension that never named its tab last reported. */
   pageUrl?: string;
-  /** Set by the DevTools panel. Dies with the socket. */
-  actionsConfirmed: boolean;
   /** Worker sockets answer capability probes. They are not DevTools tabs. */
   role: "devtools" | "worker";
   /** True when the browser set an extension Origin on the upgrade. */
@@ -310,7 +302,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   const token = config.token ?? generateToken();
   const toolFilter = resolveEnabledTools(API_TOOL_NAMES, config.enabledTools, config.disabledTools);
   const extensionId = config.extensionId?.trim() || undefined;
-  const allowActions = config.allowActions === true;
   if (toolFilter.unknown.length > 0) {
     log.warn(`Ignoring unknown tool name(s) in filter: ${toolFilter.unknown.join(", ")}`);
   }
@@ -390,10 +381,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     });
   });
 
-  // The extension cannot set an Authorization header on a WebSocket, so it
-  // collects the token here and offers it as a subprotocol. A page origin is
-  // already refused by localOnlyGuard; a non-browser client has no extension
-  // origin and is refused here too. The token is not on /.identity.
   app.post("/.pair", (req: Request, res: Response) => {
     const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
     if (!extensionOriginAllowed(origin, extensionId)) {
@@ -415,7 +402,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       path: req.path,
       query: req.query as Record<string, unknown>,
       enabled: toolFilter.enabled,
-      actionsAllowed: allowActions || actionsConfirmed(),
+      actionsAllowed: capabilityPolicy.allowInput || panelEnabled,
     });
     if (!decision.ok) {
       res.status(403).json({ error: decision.error, code: decision.code });
@@ -573,6 +560,24 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
   });
 
+  api.post("/navigate", async (req: Request, res: Response) => {
+    try {
+      const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+      if (!url) {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+      const tabId = req.body?.tabId;
+      const result = await navigateTab({
+        url,
+        ...(tabId !== undefined ? { tabId } : {}),
+      });
+      res.json(result);
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
   api.post("/storage", async (req: Request, res: Response) => {
     try {
       const kinds = parseList(req.body?.kinds) ?? ["localStorage", "sessionStorage"];
@@ -625,10 +630,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   const server = http.createServer(app);
   server.on("error", (error) => log.error("HTTP server error:", error));
 
-  const wss = new WebSocketServer({
-    noServer: true,
-    handleProtocols: (protocols) => (protocols.has(WEBSOCKET_PROTOCOL) ? WEBSOCKET_PROTOCOL : false),
-  });
+  const wss = new WebSocketServer({ noServer: true });
   wss.on("error", (error) => log.error("WebSocket server error:", error));
 
   server.on("upgrade", (req, socket: Duplex, head) => {
@@ -638,30 +640,32 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       return rejectUpgrade(socket, 404, "Not found");
     }
 
-    const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
-    if (!isAllowedHostHeader(hostHeader)) {
-      return rejectUpgrade(socket, 403, "Forbidden host");
-    }
-
-    const originHeader = req.headers.origin;
-    const origin = typeof originHeader === "string" ? originHeader : undefined;
-    if (Array.isArray(originHeader) || (origin && !extensionOriginAllowed(origin, extensionId))) {
-      log.warn("Rejected websocket upgrade from a non-extension origin");
-      return rejectUpgrade(socket, 403, "Forbidden origin");
-    }
-
-    // The token used to travel in the query string, which is the URL access
-    // logs keep. It is accepted from the Authorization header (non-browser
-    // clients) or a websocket subprotocol (the extension, which cannot set
-    // headers). An extension origin no longer skips the check: forging Origin
-    // was enough to be treated as the extension.
     if (url.searchParams.has("token")) {
       return rejectUpgrade(socket, 401, "Unauthorized");
     }
-    const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
-    const candidates = [bearerToken(authorization), ...websocketProtocolTokens(req.headers["sec-websocket-protocol"])];
-    if (!candidates.some((presented) => presented && tokensMatch(presented, token))) {
-      return rejectUpgrade(socket, 401, "Unauthorized");
+
+    const origin = req.headers.origin;
+    if (origin) {
+      // A browser sets Origin itself, so a page origin here means a web page is
+      // trying to impersonate the extension.
+      if (!isExtensionOrigin(origin)) {
+        log.warn(`Rejected websocket upgrade from origin ${origin}`);
+        return rejectUpgrade(socket, 403, "Forbidden origin");
+      }
+      if (!extensionOriginAllowed(origin, extensionId)) {
+        log.warn("Rejected websocket upgrade from a non-matching extension id");
+        return rejectUpgrade(socket, 403, "Forbidden origin");
+      }
+    } else {
+      // No Origin means a non-browser client; it must prove it knows the token.
+      const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+      const candidates = [
+        bearerToken(authorization),
+        ...websocketProtocolTokens(req.headers["sec-websocket-protocol"]),
+      ];
+      if (!candidates.some((presented) => presented && tokensMatch(presented, token))) {
+        return rejectUpgrade(socket, 401, "Unauthorized");
+      }
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
@@ -678,7 +682,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       missedPings: 0,
       lastSeen: Date.now(),
       tabId: null,
-      actionsConfirmed: false,
       role: "devtools",
       fromExtension: isExtensionOrigin(origin),
     };
@@ -733,13 +736,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   heartbeat.unref?.();
 
   // -------------------------------------------------------------- helpers
-
-  function actionsConfirmed(): boolean {
-    for (const connection of connections.values()) {
-      if (connection.actionsConfirmed) return true;
-    }
-    return false;
-  }
 
   function dropConnection(id: string): void {
     const connection = connections.get(id);
@@ -1032,11 +1028,6 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         if (typeof tabId === "number" || typeof tabId === "string") bindTab(connection, tabId);
         break;
       }
-      case "actions-confirmed":
-        // The panel's confirmation. It is not a capture setting, and it does
-        // not outlive this socket — closing DevTools withdraws it.
-        connection.actionsConfirmed = message["confirmed"] === true;
-        break;
       case "capability-state": {
         if (!connection.fromExtension) break;
         if (typeof message["popupEnabled"] === "boolean") {
@@ -1091,6 +1082,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         break;
       case "screenshot-result":
       case "refresh-result":
+      case "navigate-result":
       case "storage-result":
       case "capability-probe-result":
         resolvePending(connection, message);
@@ -1200,6 +1192,54 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
   async function refreshTab(options: { tabId?: TabId } = {}): Promise<void> {
     await requestFromExtension(connectionForTab(options.tabId), "refresh-tab");
+  }
+
+  function parseHttpUrl(raw: string): URL {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new ExtensionRequestError(`Invalid URL: ${raw}`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new ExtensionRequestError("Only http(s) URLs can be loaded");
+    }
+    return parsed;
+  }
+
+  async function navigateTab(options: {
+    url: string;
+    tabId?: TabId;
+  }): Promise<{ tabId: TabId; requestedUrl: string; finalUrl: string; wasDiscarded: boolean }> {
+    const requestedUrl = parseHttpUrl(options.url.trim()).href;
+    const tabId = resolveTabId(options.tabId);
+    if (tabId === null) {
+      throw new ExtensionRequestError(
+        "No tab is selected. Call listBrowserTabs and pass tabId, or open DevTools on the tab you mean."
+      );
+    }
+    const gate = await checkCapability("navigate", { tabId, destinationUrl: requestedUrl });
+    if (!gate.allowed) {
+      throw new ExtensionRequestError(gate.reason);
+    }
+    const worker = workerConnection();
+    if (!worker) {
+      throw new ExtensionRequestError(
+        "The extension service worker is not connected. Reload the extension or restart the browser, then try again."
+      );
+    }
+    const response = await requestFromExtension(worker, "navigate-tab", {
+      tabId,
+      url: requestedUrl,
+    });
+    const finalUrl =
+      typeof response["finalUrl"] === "string" ? response["finalUrl"] : requestedUrl;
+    return {
+      tabId,
+      requestedUrl,
+      finalUrl,
+      wasDiscarded: response["wasDiscarded"] === true,
+    };
   }
 
   async function readStorage(
@@ -1570,6 +1610,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     readArtifact,
     captureScreenshot,
     refreshTab,
+    navigateTab,
     readStorage,
     runAudit,
     close,
@@ -1676,9 +1717,6 @@ function parseList(value: unknown): string[] | undefined {
   return undefined;
 }
 
-/** Consecutive ports tried when the requested one is already taken. */
-export const CONNECTOR_BIND_ATTEMPTS = 11;
-
 /** Binds the requested port, walking forward if it is taken. */
 function listen(
   server: http.Server,
@@ -1691,18 +1729,7 @@ function listen(
     let remaining = attempts;
 
     const tryListen = () => {
-      const onListening = () => {
-        server.off("error", onError);
-        const address = server.address();
-        resolve(typeof address === "object" && address ? address.port : port);
-      };
-
       const onError = (error: NodeJS.ErrnoException) => {
-        // listen() registers onListening before the bind is attempted. A
-        // failed attempt leaves it in place, so a walk across taken ports
-        // stacks one listener per try and every one of them runs if a later
-        // port succeeds.
-        server.off("listening", onListening);
         if (error.code === "EADDRINUSE" && remaining > 1 && startPort !== 0) {
           remaining -= 1;
           port += 1;
@@ -1713,7 +1740,11 @@ function listen(
       };
 
       server.once("error", onError);
-      server.listen(port, host, onListening);
+      server.listen(port, host, () => {
+        server.off("error", onError);
+        const address = server.address();
+        resolve(typeof address === "object" && address ? address.port : port);
+      });
     };
 
     tryListen();
