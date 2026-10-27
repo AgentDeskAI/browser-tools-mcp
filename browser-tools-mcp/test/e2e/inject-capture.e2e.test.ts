@@ -157,7 +157,15 @@ describe.skipIf(!browserSupport.usable)("injected console capture", () => {
 
     expect(drained.some((e) => e.message.includes("INJECT-UNCAUGHT"))).toBe(true);
     expect(drained.some((e) => e.message.includes("INJECT-REJECTED"))).toBe(true);
-    expect(drained.every((e) => e.level === "error")).toBe(true);
+    // The fixture page also logs after load (fetches, a late timer). Those can
+    // land in the buffer during the wait and are not part of this assertion.
+    expect(
+      drained
+        .filter(
+          (e) => e.message.includes("INJECT-UNCAUGHT") || e.message.includes("INJECT-REJECTED")
+        )
+        .every((e) => e.level === "error")
+    ).toBe(true);
     await page.close();
   });
 
