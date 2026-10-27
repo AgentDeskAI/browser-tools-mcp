@@ -14,6 +14,12 @@ import {
 import { resolveEnabledTools } from "../connector/api-policy.js";
 import { createLogger } from "../util/logger.js";
 import { AUDIT_CATEGORIES, type AuditCategory } from "../lighthouse/types.js";
+import {
+  RESTRICTED_PAGE_KINDS,
+  RESTRICTED_PAGE_MESSAGE,
+  RestrictedPageError,
+  restrictedPageToolText,
+} from "../restricted-page.js";
 
 const log = createLogger("mcp");
 
@@ -70,10 +76,27 @@ function ok(structured: Record<string, unknown>, extraContent: ToolContent[] = [
 }
 
 function fail(error: unknown): ToolResult {
+  if (error instanceof RestrictedPageError) {
+    log.warn("Tool call failed:", error.message);
+    // Text carries the JSON. structuredContent is omitted: clients validate it
+    // against the success output schema and would reject this shape.
+    return { content: [{ type: "text", text: restrictedPageToolText(error) }], isError: true };
+  }
   const message = error instanceof Error ? error.message : String(error);
   log.warn("Tool call failed:", message);
   return { content: [{ type: "text", text: message }], isError: true };
 }
+
+const restrictedPageOutput = {
+  access: z
+    .literal("metadata-only")
+    .optional()
+    .describe(`Set when this page cannot be scripted. The message is "${RESTRICTED_PAGE_MESSAGE}".`),
+  message: z.string().optional().describe("Shared wording for a page that cannot be scripted"),
+  scriptable: z.literal(false).optional().describe("False when the page cannot be read or acted on"),
+  kind: z.enum(RESTRICTED_PAGE_KINDS).optional(),
+  detail: z.string().optional().describe("Which kind of page cannot be scripted"),
+};
 
 /** Offers the complete history whenever a read had to be cut short. */
 function truncationLinks(result: { truncated: boolean; tabId: unknown }): ToolContent[] {
@@ -251,7 +274,9 @@ const TOOLS: ToolDefinition[] = [
           description:
             "Every browser tab that currently has DevTools open, with the tabId you can pass to any other tool. " +
             "Call this when a result reported otherTabs above 0, or when the user mentions a page other than the one you have been reading. " +
-            "The tab marked isCurrent is the one every other tool uses when you do not pass tabId.",
+            "The tab marked isCurrent is the one every other tool uses when you do not pass tabId. " +
+            "A tab on chrome://, DevTools, view-source, the Chrome Web Store, an extension page, or the PDF viewer " +
+            `is metadata only (access "metadata-only", "${RESTRICTED_PAGE_MESSAGE}") and cannot be scripted.`,
           outputSchema: {
             tabs: z.array(z.record(z.string(), z.unknown())),
             currentTabId: z.union([z.number(), z.string()]).nullable(),
@@ -447,7 +472,8 @@ const TOOLS: ToolDefinition[] = [
         {
           title: "Get current page",
           description:
-            "Which page the browser is currently on. Call this before reading telemetry so you know what the logs describe. If connectedTabs is above 1, call listBrowserTabs before assuming this is the page the user means.",
+            "Which page the browser is currently on. Call this before reading telemetry so you know what the logs describe. If connectedTabs is above 1, call listBrowserTabs before assuming this is the page the user means. " +
+            `When the page cannot be scripted, access is "metadata-only" and message is "${RESTRICTED_PAGE_MESSAGE}".`,
           outputSchema: {
             url: z.string(),
             tabId: z.union([z.number(), z.string()]).nullable(),
@@ -456,6 +482,7 @@ const TOOLS: ToolDefinition[] = [
               .number()
               .int()
               .describe("How many tabs have DevTools open. Above 1 means other pages exist."),
+            ...restrictedPageOutput,
           },
           annotations: {
             title: "Get current page",
@@ -604,7 +631,10 @@ const TOOLS: ToolDefinition[] = [
           description:
             "Loads a URL in the chosen browser tab without focusing it or attaching the debugger. " +
             "Uses the tabId from listBrowserTabs. Requires the extension service worker, the popup " +
-            "switch, and --allow-input on browser-tools-mcp (browser-tools CLI: --allow-actions).",
+            "switch, and --allow-input on browser-tools-mcp (browser-tools CLI: --allow-actions). " +
+            "chrome://, DevTools, view-source, the Chrome Web Store, and extension pages are refused. " +
+            "An http(s) PDF may load, then the tool fails because the viewer cannot be scripted. " +
+            `The error text is JSON with access "metadata-only" and message "${RESTRICTED_PAGE_MESSAGE}".`,
           inputSchema: {
             url: z.string().describe("http(s) URL to load in the tab"),
             tabId: tabIdInput,

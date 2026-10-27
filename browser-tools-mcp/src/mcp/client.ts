@@ -13,12 +13,23 @@ import type {
   TabId,
 } from "../connector/store.js";
 import type { AuditCategory, AuditReport } from "../lighthouse/types.js";
+import {
+  restrictedPageErrorFromPayload,
+  restrictedPageFields,
+  type RestrictedPageKind,
+} from "../restricted-page.js";
 
 export interface PageInfo {
   url: string;
   tabId: number | string | null;
   extensionConnected: boolean;
   connectedTabs: number;
+  /** Present when the current page cannot be scripted. */
+  access?: "metadata-only";
+  message?: string;
+  scriptable?: false;
+  kind?: RestrictedPageKind;
+  detail?: string;
 }
 
 export interface TabListing {
@@ -110,11 +121,13 @@ export class InProcessConnectorClient implements ConnectorClient {
     const tabs = this.#connector.listTabs();
     const current = tabs.find((tab) => tab.isCurrent);
     const page = this.#connector.store.getCurrentPage();
+    const url = current?.url || page.url;
     return {
-      url: current?.url || page.url,
+      url,
       tabId: this.#connector.getCurrentTabId() ?? page.tabId,
       extensionConnected: this.#connector.hasExtension(),
       connectedTabs: tabs.length,
+      ...restrictedPageFields(url),
     };
   }
 
@@ -235,6 +248,8 @@ export class HttpConnectorClient implements ConnectorClient {
     const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
 
     if (!response.ok) {
+      const restricted = restrictedPageErrorFromPayload(payload);
+      if (restricted) throw restricted;
       const message =
         typeof payload["error"] === "string" ? payload["error"] : `Request failed (${response.status})`;
       throw new Error(message);

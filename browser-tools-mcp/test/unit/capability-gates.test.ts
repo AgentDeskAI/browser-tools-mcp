@@ -268,15 +268,59 @@ describe("origin allowlist", () => {
     }
   });
 
-  it("refuses a non-http URL and a URL that carries credentials", () => {
+  it("refuses a non-scriptable page and a URL that carries credentials", () => {
     expect(decideCapability("readTab", { ...open, liveUrl: "chrome://settings" })).toEqual({
       allowed: false,
-      reason: GateReason.urlNotAllowed,
+      reason: GateReason.restricted,
     });
     expect(decideCapability("click", { ...open, liveUrl: "http://user:pass@localhost:3000/" })).toEqual({
       allowed: false,
       reason: GateReason.urlNotAllowed,
     });
+  });
+
+  it("lets navigation leave a restricted page and still refuses acting on one", () => {
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        liveUrl: "chrome://settings",
+        destinationUrl: "http://localhost:3000/next",
+      })
+    ).toEqual({ allowed: true, reason: GateReason.allowed });
+
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        liveUrl: "http://localhost:3000/",
+        destinationUrl: "devtools://devtools/",
+      })
+    ).toEqual({ allowed: false, reason: GateReason.restricted });
+
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        liveUrl: "chrome://newtab/",
+        destinationUrl: "https://chromewebstore.google.com/detail/ext",
+      })
+    ).toEqual({ allowed: false, reason: GateReason.restricted });
+
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        liveUrl: "http://localhost:3000/",
+        destinationUrl: "http://localhost:3000/manual.pdf",
+      }).allowed
+    ).toBe(true);
+
+    expect(decideCapability("softClick", { ...open, liveUrl: "http://localhost:3000/manual.pdf" })).toEqual({
+      allowed: false,
+      reason: GateReason.restricted,
+    });
+    expect(
+      decideCapability("readTab", { ...open, liveUrl: "https://chrome.google.com/webstore/detail/ext" })
+    ).toEqual({ allowed: false, reason: GateReason.restricted });
+    expect(tabListed("chrome://extensions/", policy())).toBe(true);
+    expect(tabListed("about:blank", policy())).toBe(true);
   });
 
   it("drops excluded origins from a tab listing and leaves the list empty by default", () => {

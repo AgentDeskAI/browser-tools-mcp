@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Non-scriptable pages are reported the same way everywhere.** `chrome://`,
+  DevTools, `view-source:`, the Chrome Web Store, extension pages, and the
+  built-in PDF viewer come back as metadata only (`access: "metadata-only"`,
+  "metadata only, can't read or act"). Navigation to those pages is refused.
+  An http(s) PDF can still load, and is then reported as not scriptable. Page
+  info and the tab list carry the same fields. Screenshot, storage, console,
+  network, and audits on those pages return that result instead of an empty
+  success.
+
 ## 2.0.5
 
 The `browser-tools` CLI. The packages published to npm as 2.0.4 were

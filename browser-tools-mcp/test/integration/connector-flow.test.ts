@@ -247,7 +247,7 @@ describe("screenshots", () => {
 
   it("surfaces an extension-side capture failure", async () => {
     extension = await connectExtension({
-      onScreenshot: () => ({ ok: false, error: "Cannot capture devtools:// URL" }),
+      onScreenshot: () => ({ ok: false, error: "The tab was closed" }),
     });
 
     const res = await request(connector.app)
@@ -256,7 +256,28 @@ describe("screenshots", () => {
       .send({});
 
     expect(res.status).toBe(502);
-    expect(res.body.error).toContain("devtools://");
+    expect(res.body.error).toContain("tab was closed");
+  });
+
+  it("reports a devtools capture failure as a page that cannot be scripted", async () => {
+    extension = await connectExtension({
+      onScreenshot: () => ({ ok: false, error: "Cannot capture devtools:// URL" }),
+    });
+
+    const res = await request(connector.app)
+      .post("/api/screenshot")
+      .set("Authorization", auth())
+      .send({});
+
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({
+      code: "RESTRICTED_PAGE",
+      access: "metadata-only",
+      message: "metadata only, can't read or act",
+      scriptable: false,
+      kind: "devtools",
+    });
+    expect(res.body.url).toContain("devtools://");
   });
 
   it("times out instead of hanging when the extension never answers", async () => {

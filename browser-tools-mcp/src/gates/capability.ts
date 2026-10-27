@@ -1,6 +1,11 @@
 import net from "node:net";
 
 import { classifyAddress, isLocalName, normalizeHost, originOf } from "../lighthouse/destination.js";
+import {
+  loadsWithoutScripting,
+  RESTRICTED_PAGE_MESSAGE,
+  restrictedPage,
+} from "../restricted-page.js";
 
 /**
  * Capability gates for script evaluation, real input, and the no-DevTools
@@ -52,6 +57,8 @@ export const GateReason = {
   destinationNotAllowed: "destination is not allowed",
   excluded: "origin is excluded",
   banner: "banner bypass is disabled",
+  /** Same wording as restricted-page reports. The page cannot be read or acted on. */
+  restricted: RESTRICTED_PAGE_MESSAGE,
   unknown: "unknown action",
   notRechecked: "live tab URL was not re-checked",
   switchUnconfirmed: "popup switch was not confirmed",
@@ -249,17 +256,31 @@ export function decideCapability(action: string, context: GateContext): GateDeci
   if (action === "listTabs") return { allowed: true, reason: GateReason.allowed };
 
   if (action === "readTab") {
+    if (restrictedPage(context.liveUrl)) return deny(GateReason.restricted);
     const read = readUrlPermitted(context.liveUrl, context.policy);
     return read.permitted ? { allowed: true, reason: GateReason.allowed } : deny(read.reason);
   }
 
-  const live = inputUrlPermitted(context.liveUrl, context.policy, "tab");
-  if (!live.permitted) return deny(live.reason);
-
   if (action === "navigate") {
+    // A chrome:// (or similar) tab has no scriptable origin. Leaving it is
+    // allowed; the destination is still checked. http(s) PDFs may load and are
+    // reported afterwards. Every other restricted destination is refused here.
+    if (!restrictedPage(context.liveUrl)) {
+      const live = inputUrlPermitted(context.liveUrl, context.policy, "tab");
+      if (!live.permitted) return deny(live.reason);
+    }
+    if (restrictedPage(context.destinationUrl) && !loadsWithoutScripting(context.destinationUrl)) {
+      return deny(GateReason.restricted);
+    }
     const destination = inputUrlPermitted(context.destinationUrl, context.policy, "destination");
     if (!destination.permitted) return deny(destination.reason);
+    return { allowed: true, reason: GateReason.allowed };
   }
+
+  if (restrictedPage(context.liveUrl)) return deny(GateReason.restricted);
+
+  const live = inputUrlPermitted(context.liveUrl, context.policy, "tab");
+  if (!live.permitted) return deny(live.reason);
 
   return { allowed: true, reason: GateReason.allowed };
 }
