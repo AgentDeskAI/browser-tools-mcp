@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.0.5
+
+The `browser-tools` CLI. The packages published to npm as 2.0.4 were
+hardening only: that publish was cut from 936272d, which is the local API
+hardening and the capability gates in the section below, and it does not
+include this command.
+
+- **`browser-tools` calls the same tools as the MCP server.** The binary
+  ships in `@agentdeskai/browser-tools-mcp`. A command is the tool name and
+  one JSON object of arguments
+  (`browser-tools getConsoleLogs '{"limit":20}'`).
+  `browser-tools resource <name> <scope>` reads the same resources
+  (`console-history`, `network-history`, `network-har`, `screenshot`,
+  `audit-report`). Connector flags match `browser-tools-mcp`, except
+  capability gating: the CLI takes `--allow-actions` (argv only), which maps
+  to the connector's input policy, and it rejects `--allow-eval` and
+  `--allow-input`.
+- **`navigateBrowser` loads a URL in an existing tab without focusing it or
+  attaching the debugger.** The extension service worker calls
+  `chrome.tabs.update` with `active: false`. Pass the `tabId` of a tab that
+  has DevTools open (`listBrowserTabs`). It needs the session popup switch
+  and `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the
+  CLI. Local origins are allowed by default; other http(s) origins need
+  `--allow-input-origins`.
+- `@agentdeskai/browser-tools-server` now requires
+  `@agentdeskai/browser-tools-mcp` `^2.0.5`.
+
 ## 2.0.4
 
 Low-severity hardening of the local connector, and the test runner is now Vitest 5.
@@ -21,6 +48,15 @@ Low-severity hardening of the local connector, and the test runner is now Vitest
   embeds the connector are not gated by this.
 - **1.x is unsupported.** README and SECURITY.md tell anyone still on it to
   upgrade. The vulnerabilities fixed in 2.0 are not patched on 1.x.
+- **Script evaluation and input default off (#251).** `--allow-eval` and
+  `--allow-input` are process flags with no environment-variable form.
+  Navigation, soft input, and real input share an origin allowlist that is
+  local by default (`--allow-input-origins`, `--exclude-origins`). The
+  DevTools panel switch covers real input and script evaluation. A
+  session-scoped popup switch, also default off, covers page actions that do
+  not use DevTools. The extension re-reads the tab URL before a decision.
+  Nothing here hides the debugger banner. These gates are in the 2.0.4 npm
+  packages; the `browser-tools` CLI that sits on top of them is 2.0.5.
 
 Vitest 5 is a dev dependency. Node 22.12 or newer is required to run the tests,
 which the existing Node 22.19 floor already satisfies.
