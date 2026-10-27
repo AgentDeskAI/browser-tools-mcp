@@ -7,6 +7,7 @@ import {
   screenshotUri,
 } from "./resources.js";
 import type { AuditCategory } from "../lighthouse/types.js";
+import { RestrictedPageError, restrictedPageToolText } from "../restricted-page.js";
 
 export type ToolContent =
   | { type: "text"; text: string }
@@ -42,6 +43,9 @@ function ok(structured: Record<string, unknown>, extraContent: ToolContent[] = [
 }
 
 function fail(error: unknown): ToolResult {
+  if (error instanceof RestrictedPageError) {
+    return { content: [{ type: "text", text: restrictedPageToolText(error) }], isError: true };
+  }
   const message = error instanceof Error ? error.message : String(error);
   return { content: [{ type: "text", text: message }], isError: true };
 }

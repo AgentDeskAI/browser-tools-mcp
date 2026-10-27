@@ -65,6 +65,13 @@ import {
   type CapabilityAction,
   type GatePolicy,
 } from "../gates/capability.js";
+import {
+  loadsWithoutScripting,
+  restrictedPage,
+  restrictedPageFields,
+  restrictedPageFromExtensionError,
+  RestrictedPageError,
+} from "../restricted-page.js";
 
 export const SERVER_SIGNATURE = "mcp-browser-connector-24x7";
 export const SERVER_VERSION = "2.0.0";
@@ -167,6 +174,12 @@ export interface TabView {
   isCurrent: boolean;
   consoleCount: number;
   networkCount: number;
+  /** Set when this tab cannot be scripted. Same fields as navigation errors. */
+  access?: "metadata-only";
+  message?: string;
+  scriptable?: false;
+  kind?: string;
+  detail?: string;
 }
 
 export interface ExportResult<T> {
@@ -508,11 +521,13 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   api.get("/page", (_req, res) => {
     const current = currentTabId !== null ? tabs.get(String(currentTabId)) : undefined;
     const page = store.getCurrentPage();
+    const url = current?.url || page.url;
     res.json({
-      url: current?.url || page.url,
+      url,
       tabId: currentTabId ?? page.tabId,
       extensionConnected: telemetryConnected(),
       connectedTabs: tabs.size,
+      ...restrictedPageFields(url),
     });
   });
 
@@ -838,7 +853,14 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       isCurrent: String(record.tabId) === String(currentTabId),
       consoleCount: store.queryConsole({ tabId: record.tabId }).total,
       networkCount: store.queryNetwork({ tabId: record.tabId }).total,
+      ...restrictedPageFields(record.url),
     }));
+  }
+
+  /** Reading or acting on a non-scriptable page is reported, not done quietly. */
+  function assertScriptable(url: string): void {
+    const found = restrictedPage(url);
+    if (found) throw new RestrictedPageError(found);
   }
 
   function tabUrl(tabId: TabId | null): string {
@@ -861,6 +883,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   ): TabScopedResult<ConsoleEntry> {
     const { allTabs, tabId: requested, ...rest } = query;
     const scoped = scope(allTabs, requested);
+    if (scoped.tabId !== null) assertScriptable(scoped.url);
     const result = store.queryConsole(
       scoped.tabId === null ? rest : { ...rest, tabId: scoped.tabId }
     );
@@ -872,6 +895,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   ): TabScopedResult<NetworkEntry> {
     const { allTabs, tabId: requested, ...rest } = query;
     const scoped = scope(allTabs, requested);
+    if (scoped.tabId !== null) assertScriptable(scoped.url);
     const result = store.queryNetwork(
       scoped.tabId === null ? rest : { ...rest, tabId: scoped.tabId }
     );
@@ -882,6 +906,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     options: { tabId?: TabId; allTabs?: boolean } = {}
   ): ExportResult<ConsoleEntry> {
     const scoped = scope(options.allTabs, options.tabId);
+    if (scoped.tabId !== null) assertScriptable(scoped.url);
     return {
       tabId: scoped.tabId,
       url: scoped.url,
@@ -893,6 +918,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     options: { tabId?: TabId; allTabs?: boolean } = {}
   ): ExportResult<NetworkEntry> {
     const scoped = scope(options.allTabs, options.tabId);
+    if (scoped.tabId !== null) assertScriptable(scoped.url);
     return {
       tabId: scoped.tabId,
       url: scoped.url,
@@ -944,6 +970,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
   function getSelectedElement(options: { tabId?: TabId } = {}): unknown {
     const tabId = resolveTabId(options.tabId);
+    assertScriptable(tabUrl(tabId));
     return tabId === null ? store.getSelectedElement() : store.getSelectedElement(tabId);
   }
 
@@ -1113,7 +1140,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
     if (message["ok"] === false) {
       const reason = typeof message["error"] === "string" ? message["error"] : "Extension reported a failure";
-      entry.reject(new ExtensionRequestError(reason));
+      const restricted = restrictedPageFromExtensionError(reason);
+      entry.reject(restricted ? new RestrictedPageError(restricted) : new ExtensionRequestError(reason));
       return;
     }
     entry.resolve(message);
@@ -1147,6 +1175,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     resolveSafeScreenshotPath(screenshotDir, requestedName);
 
     const connection = connectionForTab(options.tabId);
+    assertScriptable(connection.tabId !== null ? tabUrl(connection.tabId) : store.getCurrentPage().url);
 
     const maxBytes = store.settings.screenshotMaxBytes;
     const response = await requestFromExtension(connection, "capture-screenshot", {
@@ -1191,7 +1220,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   }
 
   async function refreshTab(options: { tabId?: TabId } = {}): Promise<void> {
-    await requestFromExtension(connectionForTab(options.tabId), "refresh-tab");
+    const connection = connectionForTab(options.tabId);
+    assertScriptable(connection.tabId !== null ? tabUrl(connection.tabId) : store.getCurrentPage().url);
+    await requestFromExtension(connection, "refresh-tab");
   }
 
   function parseHttpUrl(raw: string): URL {
@@ -1211,7 +1242,12 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     url: string;
     tabId?: TabId;
   }): Promise<{ tabId: TabId; requestedUrl: string; finalUrl: string; wasDiscarded: boolean }> {
-    const requestedUrl = parseHttpUrl(options.url.trim()).href;
+    const rawUrl = options.url.trim();
+    const blocked = restrictedPage(rawUrl);
+    if (blocked && !loadsWithoutScripting(rawUrl)) {
+      throw new RestrictedPageError(blocked);
+    }
+    const requestedUrl = parseHttpUrl(rawUrl).href;
     const tabId = resolveTabId(options.tabId);
     if (tabId === null) {
       throw new ExtensionRequestError(
@@ -1234,11 +1270,21 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     });
     const finalUrl =
       typeof response["finalUrl"] === "string" ? response["finalUrl"] : requestedUrl;
+    const wasDiscarded = response["wasDiscarded"] === true;
+    const landed = restrictedPage(finalUrl);
+    if (landed) {
+      throw new RestrictedPageError(landed, {
+        navigated: true,
+        tabId,
+        requestedUrl,
+        wasDiscarded,
+      });
+    }
     return {
       tabId,
       requestedUrl,
       finalUrl,
-      wasDiscarded: response["wasDiscarded"] === true,
+      wasDiscarded,
     };
   }
 
@@ -1246,7 +1292,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     kinds: string[],
     options: { tabId?: TabId } = {}
   ): Promise<Record<string, unknown>> {
-    const response = await requestFromExtension(connectionForTab(options.tabId), "get-storage", {
+    const connection = connectionForTab(options.tabId);
+    assertScriptable(connection.tabId !== null ? tabUrl(connection.tabId) : store.getCurrentPage().url);
+    const response = await requestFromExtension(connection, "get-storage", {
       kinds,
     });
     const storage = response["storage"];
@@ -1283,6 +1331,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
         "No page URL is known yet. Open the page in Chrome with DevTools open, or pass a url explicitly."
       );
     }
+    const unscriptable = restrictedPage(url);
+    if (unscriptable) throw new RestrictedPageError(unscriptable);
     const egress = await checkAuditTarget(url);
     const runner = config.auditRunner ?? runLighthouseAudit;
 
@@ -1638,6 +1688,10 @@ function respondWithError(res: Response, error: unknown): void {
   }
   if (error instanceof ExtensionTimeoutError) {
     res.status(504).json({ error: error.message, code: "EXTENSION_TIMEOUT" });
+    return;
+  }
+  if (error instanceof RestrictedPageError) {
+    res.status(422).json({ error: error.message, code: "RESTRICTED_PAGE", ...error.toJSON() });
     return;
   }
   if (error instanceof ExtensionRequestError) {

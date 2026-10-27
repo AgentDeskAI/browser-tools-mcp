@@ -657,7 +657,12 @@ describe("audit destination policy", () => {
         .set("Authorization", `Bearer ${guarded.token}`)
         .send({ tabId: 11 });
       expect(own.status).toBe(422);
-      expect(own.body.error).toMatch(/navigate to an http\(s\) page first/);
+      expect(own.body).toMatchObject({
+        code: "RESTRICTED_PAGE",
+        access: "metadata-only",
+        message: "metadata only, can't read or act",
+        scriptable: false,
+      });
     } finally {
       await ext.close();
     }
