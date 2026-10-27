@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrowserTools MCP",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "Sends console logs, network requests and screenshots from your browser to a local MCP server so AI coding agents can read them.",
   "action": {
     "default_title": "BrowserTools MCP",

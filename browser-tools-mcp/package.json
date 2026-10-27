@@ -1,6 +1,6 @@
 {
   "name": "@agentdeskai/browser-tools-mcp",
-  "version": "2.0.5",
+  "version": "2.1.0",
   "description": "MCP server exposing live browser telemetry (console logs, network requests, screenshots, Lighthouse audits) from your real Chrome session",
   "mcpName": "io.github.AgentDeskAI/browser-tools-mcp",
   "type": "module",
