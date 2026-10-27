@@ -98,7 +98,12 @@ setup and a silent one look the same.
 | `getSelectedElement` | The element selected in the Elements panel |
 | `getPageInfo` | Which page the browser is currently on |
 | `getConnectionStatus` | Whether the extension is connected, and capture counts |
-| `listBrowserTabs` | Every tab with DevTools open, and the id to address it by |
+| `listBrowserTabs` | Tabs with DevTools open, addressed by a DevTools-connected `tabId` |
+| `listTabs` | Tabs `chrome.tabs` returns (not every open tab), addressed by `chromeTabId` |
+| `readTab` | Headings, excerpt, and a snapshot of a `chromeTabId`, without the debugger |
+| `navigateBrowser` | Load a URL in a DevTools-connected tab, without focusing it |
+| `navigateTab` | Load a URL in the background from `listTabs`, visible window only |
+| `softClick` / `softType` | Untrusted click or type. Result is `worked` or `needs a real gesture` |
 | `takeScreenshot` | Screenshot returned **as an image**, plus its file path |
 | `refreshBrowser` | Reloads the inspected tab |
 | `getBrowserStorage` | localStorage, sessionStorage and cookies (values gated) |
@@ -115,6 +120,16 @@ static text in every tool listing.
 All tools declare MCP output schemas, so clients receive structured data rather
 than prose they have to parse, and read-only tools are annotated as such so
 clients can auto-approve them safely.
+
+### Tabs without DevTools
+
+`listTabs`, `readTab`, `navigateTab`, `softClick`, and `softType` use `chrome.tabs` and `chrome.scripting`. They do not attach the debugger, so they do not show the debugging banner, and they do not activate a tab or focus a window.
+
+`chromeTabId` comes from `listTabs`. `tabId` on the other tools comes from `listBrowserTabs`. They are different id spaces. Pass each id only to the tool that issued it.
+
+`listTabs` reports the tabs `chrome.tabs` returns in the windows it returns. Other Arc Spaces, Little Arc, pinned favorites, split-view partners, and slept tabs may be missing. Incognito is skipped. This is not every open tab. Background navigation stays in the visible window until that is measured on Arc.
+
+The popup switch has to be on. Navigation and soft input also need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the `browser-tools` CLI. The same origin rules as other input apply. An asleep tab is reported and not reloaded. A soft action says `worked` or `needs a real gesture` and does not claim a failed action worked.
 
 ### Several tabs at once
 

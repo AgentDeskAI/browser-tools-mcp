@@ -118,6 +118,29 @@ export async function startFixtureServer(): Promise<FixtureServer> {
       return;
     }
 
+    if (url === "/form" || url.startsWith("/form?")) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html>
+        <html><head><meta charset="utf-8" /><title>Soft form</title></head>
+        <body>
+          <h1>Soft form</h1>
+          <form id="form" action="/form-result" method="get">
+            <label>Name <input id="name" name="name" /></label>
+            <button id="send" type="submit">Send</button>
+          </form>
+          <input id="file" type="file" />
+          <div id="editor" contenteditable="true"></div>
+          <p id="secret">user@example.com</p>
+        </body></html>`);
+      return;
+    }
+
+    if (url.startsWith("/form-result")) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><html><head><title>Form result</title></head><body><h1>Form result</h1></body></html>");
+      return;
+    }
+
     if (url === "/image.png") {
       res.writeHead(200, { "Content-Type": "image/png" });
       res.end(

@@ -18,6 +18,12 @@ import {
   restrictedPageFields,
   type RestrictedPageKind,
 } from "../restricted-page.js";
+import type {
+  ChromeNavigateResult,
+  ChromeTabListing,
+  ChromeTabRead,
+  SoftInputResult,
+} from "../tabs/contract.js";
 
 export interface PageInfo {
   url: string;
@@ -87,6 +93,16 @@ export interface ConnectorClient {
   screenshot(options: { name?: string; tabId?: TabId }): Promise<ScreenshotResult>;
   refresh(options?: { tabId?: TabId }): Promise<void>;
   navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult>;
+  listChromeTabs(): Promise<ChromeTabListing>;
+  readChromeTab(options: { chromeTabId: number }): Promise<ChromeTabRead>;
+  navigateChromeTab(options: { url: string; chromeTabId?: number }): Promise<ChromeNavigateResult>;
+  softClickChromeTab(options: { chromeTabId: number; selector: string }): Promise<SoftInputResult>;
+  softTypeChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+    text: string;
+    submit?: boolean;
+  }): Promise<SoftInputResult>;
   storage(kinds: string[], options?: { tabId?: TabId }): Promise<Record<string, unknown>>;
   audit(
     category: AuditCategory,
@@ -170,6 +186,31 @@ export class InProcessConnectorClient implements ConnectorClient {
 
   async navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult> {
     return this.#connector.navigateTab(options);
+  }
+
+  listChromeTabs(): Promise<ChromeTabListing> {
+    return this.#connector.listChromeTabs();
+  }
+
+  readChromeTab(options: { chromeTabId: number }): Promise<ChromeTabRead> {
+    return this.#connector.readChromeTab(options);
+  }
+
+  navigateChromeTab(options: { url: string; chromeTabId?: number }): Promise<ChromeNavigateResult> {
+    return this.#connector.navigateChromeTab(options);
+  }
+
+  softClickChromeTab(options: { chromeTabId: number; selector: string }): Promise<SoftInputResult> {
+    return this.#connector.softClickChromeTab(options);
+  }
+
+  softTypeChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+    text: string;
+    submit?: boolean;
+  }): Promise<SoftInputResult> {
+    return this.#connector.softTypeChromeTab(options);
   }
 
   async storage(
@@ -298,6 +339,31 @@ export class HttpConnectorClient implements ConnectorClient {
 
   navigate(options: { url: string; tabId?: TabId }): Promise<NavigateResult> {
     return this.#request("/api/navigate", { method: "POST", body: options });
+  }
+
+  listChromeTabs(): Promise<ChromeTabListing> {
+    return this.#request("/api/chrome-tabs");
+  }
+
+  readChromeTab(options: { chromeTabId: number }): Promise<ChromeTabRead> {
+    return this.#request("/api/chrome-tabs/read", { method: "POST", body: options });
+  }
+
+  navigateChromeTab(options: { url: string; chromeTabId?: number }): Promise<ChromeNavigateResult> {
+    return this.#request("/api/chrome-tabs/navigate", { method: "POST", body: options });
+  }
+
+  softClickChromeTab(options: { chromeTabId: number; selector: string }): Promise<SoftInputResult> {
+    return this.#request("/api/chrome-tabs/soft-click", { method: "POST", body: options });
+  }
+
+  softTypeChromeTab(options: {
+    chromeTabId: number;
+    selector: string;
+    text: string;
+    submit?: boolean;
+  }): Promise<SoftInputResult> {
+    return this.#request("/api/chrome-tabs/soft-type", { method: "POST", body: options });
   }
 
   async storage(

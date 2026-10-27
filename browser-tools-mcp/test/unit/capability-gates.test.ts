@@ -180,6 +180,57 @@ describe("origin allowlist", () => {
     policy: policy({ allowInput: true, allowEval: true }),
   });
 
+  it("checks only the destination when opening a new background tab", () => {
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        liveUrl: null,
+        destinationUrl: "http://127.0.0.1:3000/next",
+      })
+    ).toEqual({ allowed: true, reason: GateReason.allowed });
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        destinationUrl: "https://example.com/",
+      })
+    ).toEqual({ allowed: false, reason: GateReason.destinationNotAllowed });
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        liveUrl: null,
+        destinationUrl: null,
+      })
+    ).toEqual({ allowed: false, reason: GateReason.destinationMissing });
+  });
+
+  it("refuses a restricted destination when opening a new background tab", () => {
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        liveUrl: null,
+        destinationUrl: "chrome://settings",
+      })
+    ).toEqual({ allowed: false, reason: GateReason.restricted });
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        destinationUrl: "https://chromewebstore.google.com/detail/ext",
+      })
+    ).toEqual({ allowed: false, reason: GateReason.restricted });
+    expect(
+      decideCapability("navigate", {
+        ...open,
+        creatingTab: true,
+        destinationUrl: "http://localhost:3000/manual.pdf",
+      }).allowed
+    ).toBe(true);
+  });
+
   it("allows local addresses by default and refuses a public origin until it is listed", () => {
     expect(
       decideCapability("softClick", { ...open, liveUrl: "http://localhost:3000/app" }).allowed

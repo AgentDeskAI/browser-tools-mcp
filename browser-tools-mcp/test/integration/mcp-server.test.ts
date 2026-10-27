@@ -71,7 +71,12 @@ describe("tool registration", () => {
         "getPageInfo",
         "getSelectedElement",
         "listBrowserTabs",
+        "listTabs",
         "navigateBrowser",
+        "navigateTab",
+        "readTab",
+        "softClick",
+        "softType",
         "refreshBrowser",
         "runAccessibilityAudit",
         "runBestPracticesAudit",
@@ -103,6 +108,8 @@ describe("tool registration", () => {
       "getSelectedElement",
       "getPageInfo",
       "getConnectionStatus",
+      "listTabs",
+      "readTab",
     ]) {
       expect(byName.get(name)?.annotations?.readOnlyHint, name).toBe(true);
     }
@@ -112,6 +119,9 @@ describe("tool registration", () => {
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((t) => [t.name, t]));
 
+    expect(byName.get("navigateTab")?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get("softClick")?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get("softType")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("wipeLogs")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("wipeLogs")?.annotations?.destructiveHint).toBe(true);
     expect(byName.get("refreshBrowser")?.annotations?.readOnlyHint).toBe(false);

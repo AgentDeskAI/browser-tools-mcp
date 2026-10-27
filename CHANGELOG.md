@@ -10,6 +10,13 @@
   info and the tab list carry the same fields. Screenshot, storage, console,
   network, and audits on those pages return that result instead of an empty
   success.
+- **Tab awareness without the debugging banner.** `listTabs`, `readTab`,
+  `navigateTab`, `softClick`, and `softType` use `chrome.tabs` and
+  `chrome.scripting`. They do not attach the debugger and do not change focus.
+  `chromeTabId` from `listTabs` is separate from the DevTools-connected `tabId`
+  used by `listBrowserTabs`. The tab list does not claim to see every open tab.
+  Background navigation stays in the visible window. Soft click and type report
+  `worked` or `needs a real gesture`.
 
 ## 2.0.5
 

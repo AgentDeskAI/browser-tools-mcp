@@ -3,11 +3,13 @@
  *
  * Owns the toolbar-popup switch (session storage, so it resets when the
  * browser quits) and answers capability probes with a tab URL read at that
- * moment via chrome.tabs.get. It does not click, type, navigate, or attach
- * the debugger; those actions are separate work and must call
- * BTMCP_GATES.confirmBeforeAct with a fresh tab read before they run.
+ * moment via chrome.tabs.get. Tab list, read, background navigate, and soft
+ * input go through BTMCP_TABS. Those paths do not call the debugger API and do
+ * not activate a tab or focus a window. DevTools capture stays in devtools.js.
  */
-importScripts("shared.js", "gates.js");
+importScripts("shared.js", "gates.js", "tab-safety.js", "tab-page.js", "tab-actions.js");
+
+BTMCP_SAFETY.install(api);
 
 var socket = null;
 var reconnectTimer = null;
@@ -40,14 +42,18 @@ async function readHumanState() {
   };
 }
 
-function send(message) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+function sendOn(ws, message) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   try {
-    socket.send(JSON.stringify(message));
+    ws.send(JSON.stringify(message));
     return true;
   } catch (error) {
     return false;
   }
+}
+
+function send(message) {
+  return sendOn(socket, message);
 }
 
 async function reportState() {
@@ -68,159 +74,115 @@ function scheduleReconnect() {
   reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
 }
 
+var connecting = false;
+
 async function ensureConnected() {
-  if (closing) return;
+  if (closing || connecting) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
     return;
   }
+  connecting = true;
 
-  var settings = await loadSettings();
-  var found = await discoverServer(settings);
-  if (!found) {
-    scheduleReconnect();
-    return;
-  }
-
-  var token = "";
   try {
-    var paired = await fetch("http://" + found.host + ":" + found.port + "/.pair", { method: "POST" });
-    if (paired.ok) {
-      var body = await paired.json();
-      if (body && typeof body.token === "string") token = body.token;
-    }
-  } catch (error) {
-    token = "";
-  }
-  if (!token) {
-    scheduleReconnect();
-    return;
-  }
-
-  var ws;
-  try {
-    ws = new WebSocket("ws://" + found.host + ":" + found.port + "/extension-ws", ["browser-tools", token]);
-  } catch (error) {
-    scheduleReconnect();
-    return;
-  }
-  socket = ws;
-
-  ws.onopen = function () {
-    reconnectDelayMs = 1000;
-    send({ type: "hello", extensionVersion: "2.0.4", role: "worker" });
-    void reportState();
-  };
-
-  ws.onmessage = function (event) {
-    var message;
-    try {
-      message = JSON.parse(event.data);
-    } catch (error) {
+    var settings = await loadSettings();
+    var found = await discoverServer(settings);
+    if (!found) {
+      scheduleReconnect();
       return;
     }
-    if (message && message.type === "capability-probe") {
-      void answerProbe(message);
-    } else if (message && message.type === "navigate-tab") {
-      void navigateTab(message);
-    } else if (message && message.type === "ping") {
-      send({ type: "pong", id: message.id });
+
+    var token = "";
+    try {
+      var paired = await fetch("http://" + found.host + ":" + found.port + "/.pair", { method: "POST" });
+      if (paired.ok) {
+        var body = await paired.json();
+        if (body && typeof body.token === "string") token = body.token;
+      }
+    } catch (error) {
+      token = "";
     }
-  };
+    if (!token) {
+      scheduleReconnect();
+      return;
+    }
 
-  ws.onclose = function () {
-    if (socket === ws) socket = null;
-    scheduleReconnect();
-  };
+    var ws;
+    try {
+      ws = new WebSocket("ws://" + found.host + ":" + found.port + "/extension-ws", ["browser-tools", token]);
+    } catch (error) {
+      scheduleReconnect();
+      return;
+    }
+    socket = ws;
 
-  ws.onerror = function () {
-    /* onclose follows */
-  };
+    function reply(requestId, payload) {
+      sendOn(ws, Object.assign({ requestId: requestId }, payload));
+    }
+
+    ws.onopen = function () {
+      reconnectDelayMs = 1000;
+      sendOn(ws, { type: "hello", extensionVersion: "2.0.4", role: "worker" });
+      // State belongs on this socket. reportState() uses the current global
+      // socket, which a restart may already have replaced.
+      void readHumanState().then(function (state) {
+        sendOn(ws, {
+          type: "capability-state",
+          popupEnabled: state.popupEnabled,
+          excludeOrigins: state.excludeOrigins,
+        });
+      });
+    };
+
+    ws.onmessage = function (event) {
+      var message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        return;
+      }
+      if (message && message.type === "capability-probe") {
+        void answerProbe(message, reply);
+      } else if (message && message.type === "navigate-tab") {
+        void BTMCP_TABS.navigateConnected(api, message, reply);
+      } else if (message && message.type === "list-chrome-tabs") {
+        void BTMCP_TABS.list(api, message, reply);
+      } else if (message && message.type === "navigate-chrome-tab") {
+        void BTMCP_TABS.navigateChrome(api, message, reply);
+      } else if (message && message.type === "read-chrome-tab") {
+        void BTMCP_TABS.read(api, message, reply);
+      } else if (message && message.type === "soft-input") {
+        void BTMCP_TABS.soft(api, message, reply);
+      } else if (message && message.type === "ping") {
+        sendOn(ws, { type: "pong", id: message.id });
+      }
+    };
+
+    ws.onclose = function () {
+      if (socket === ws) socket = null;
+      scheduleReconnect();
+    };
+
+    ws.onerror = function () {
+      /* onclose follows */
+    };
+  } finally {
+    connecting = false;
+  }
 }
 
 /**
  * Reads the switch and the tab again. The URL on the probe message is ignored;
  * chrome.tabs.get is the only source.
  */
-function respond(requestId, payload) {
-  send(Object.assign({ requestId: requestId }, payload));
-}
-
-function waitForTabUrl(tabId, timeoutMs) {
-  return new Promise(function (resolve) {
-    var done = false;
-    var timer = setTimeout(function () {
-      if (done) return;
-      done = true;
-      api.tabs
-        .get(tabId)
-        .then(function (tab) {
-          resolve(tab && tab.url ? tab.url : "");
-        })
-        .catch(function () {
-          resolve("");
-        });
-    }, timeoutMs);
-
-    function onUpdated(updatedId, changeInfo, tab) {
-      if (done) return;
-      if (String(updatedId) !== String(tabId)) return;
-      if (changeInfo.status === "complete" && tab && tab.url) {
-        done = true;
-        clearTimeout(timer);
-        api.tabs.onUpdated.removeListener(onUpdated);
-        resolve(tab.url);
-      }
-    }
-    api.tabs.onUpdated.addListener(onUpdated);
-  });
-}
-
-async function navigateTab(message) {
-  var tabId = message.tabId;
-  var url = message.url;
-  if ((typeof tabId !== "number" && typeof tabId !== "string") || typeof url !== "string" || !url) {
-    respond(message.requestId, {
-      type: "navigate-result",
-      ok: false,
-      error: "tabId and url are required",
-    });
-    return;
-  }
-
-  try {
-    var before = await api.tabs.get(tabId);
-    var wasDiscarded = Boolean(before && before.discarded);
-    await api.tabs.update(tabId, { url: url, active: false });
-    var finalUrl = await waitForTabUrl(tabId, 30000);
-    if (!finalUrl) {
-      var after = await api.tabs.get(tabId);
-      finalUrl = after && after.url ? after.url : url;
-    }
-    respond(message.requestId, {
-      type: "navigate-result",
-      ok: true,
-      finalUrl: finalUrl,
-      wasDiscarded: wasDiscarded,
-    });
-  } catch (error) {
-    respond(message.requestId, {
-      type: "navigate-result",
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-async function answerProbe(message) {
+async function answerProbe(message, reply) {
   var state = await readHumanState();
   var liveUrl = null;
 
   if (message.tabId != null && (state.popupEnabled || state.panelEnabled)) {
     var tabId = typeof message.tabId === "number" ? message.tabId : Number(message.tabId);
     if (!Number.isInteger(tabId)) {
-      send({
+      reply(message.requestId, {
         type: "capability-probe-result",
-        requestId: message.requestId,
         ok: false,
         error: "Could not read the tab",
         popupEnabled: state.popupEnabled,
@@ -233,9 +195,8 @@ async function answerProbe(message) {
       var tab = await api.tabs.get(tabId);
       liveUrl = tab && typeof tab.url === "string" ? tab.url : null;
     } catch (error) {
-      send({
+      reply(message.requestId, {
         type: "capability-probe-result",
-        requestId: message.requestId,
         ok: false,
         error: "Could not read the tab",
         popupEnabled: state.popupEnabled,
@@ -246,9 +207,8 @@ async function answerProbe(message) {
     }
   }
 
-  send({
+  reply(message.requestId, {
     type: "capability-probe-result",
-    requestId: message.requestId,
     ok: true,
     liveUrl: liveUrl,
     popupEnabled: state.popupEnabled,

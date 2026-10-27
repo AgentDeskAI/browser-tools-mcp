@@ -8,6 +8,7 @@ import {
 } from "./resources.js";
 import type { AuditCategory } from "../lighthouse/types.js";
 import { RestrictedPageError, restrictedPageToolText } from "../restricted-page.js";
+import { invokeTabTool } from "../tabs/tools.js";
 
 export type ToolContent =
   | { type: "text"; text: string }
@@ -124,6 +125,9 @@ export async function invokeTool(
   client: ConnectorClient,
   args: Record<string, unknown> = {}
 ): Promise<ToolResult> {
+  const tabTool = await invokeTabTool(name, client, args);
+  if (tabTool) return tabTool;
+
   switch (name) {
     case "listBrowserTabs":
       try {
@@ -317,6 +321,11 @@ async function runAudit(
 
 /** Every registered MCP tool name must have an invoke implementation. */
 export const INVOKABLE_TOOL_NAMES: readonly string[] = [
+  "listTabs",
+  "readTab",
+  "navigateTab",
+  "softClick",
+  "softType",
   "listBrowserTabs",
   "getConsoleLogs",
   "getConsoleErrors",

@@ -15,6 +15,10 @@ export interface FakeExtensionOptions {
   onScreenshot?: (msg: any) => Promise<unknown> | unknown;
   onRefresh?: (msg: any) => Promise<unknown> | unknown;
   onNavigate?: (msg: any) => Promise<unknown> | unknown;
+  onListChromeTabs?: (msg: any) => Promise<unknown> | unknown;
+  onReadChromeTab?: (msg: any) => Promise<unknown> | unknown;
+  onNavigateChromeTab?: (msg: any) => Promise<unknown> | unknown;
+  onSoftInput?: (msg: any) => Promise<unknown> | unknown;
   onStorage?: (msg: any) => Promise<unknown> | unknown;
   /** `worker` answers capability probes and is not a DevTools tab. */
   role?: "devtools" | "worker";
@@ -110,8 +114,71 @@ export class FakeExtension {
         const custom = this.#options.onNavigate;
         const payload = custom
           ? await custom(msg)
-          : { ok: true, finalUrl: msg.url, wasDiscarded: false };
+          : { ok: true, finalUrl: msg.url, wasDiscarded: false, safety: { debuggerCalls: 0, focusChanges: 0 } };
         this.send({ type: "navigate-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "list-chrome-tabs": {
+        const custom = this.#options.onListChromeTabs;
+        const payload = custom
+          ? await custom(msg)
+          : { ok: true, visibleWindowId: 1, windows: [], safety: { debuggerCalls: 0, focusChanges: 0 } };
+        this.send({ type: "chrome-tabs-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "read-chrome-tab": {
+        const custom = this.#options.onReadChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+              read: {
+                url: "http://127.0.0.1/",
+                title: "",
+                asleep: false,
+                frozen: false,
+                skipped: null,
+                headings: [],
+                excerpt: "",
+                snapshot: [],
+                hostAccess: true,
+              },
+            };
+        this.send({ type: "chrome-tab-read-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "navigate-chrome-tab": {
+        const custom = this.#options.onNavigateChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              chromeTabId: msg.chromeTabId ?? 1,
+              finalUrl: msg.url,
+              wasDiscarded: false,
+              created: msg.create === true,
+              visibleWindowId: 1,
+              openedTabs: [],
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+            };
+        this.send({ type: "navigate-chrome-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "soft-input": {
+        const custom = this.#options.onSoftInput;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              chromeTabId: msg.chromeTabId,
+              outcome: "worked",
+              reason: null,
+              detail: "ok",
+              trusted: false,
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+            };
+        this.send({ type: "soft-input-result", requestId: msg.requestId, ...(payload as object) });
         break;
       }
       case "get-storage": {
