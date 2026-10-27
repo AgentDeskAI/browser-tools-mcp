@@ -198,7 +198,15 @@ describe("tab awareness without DevTools", () => {
       expect(settled.activeUrl).toBe(before.activeUrl);
       expect(settled.safety).toEqual({ debuggerCalls: 0, focusChanges: 0 });
 
-      const again = await callTool("listTabs");
+      // The result page's title replaces the URL only after load. listTabs can
+      // observe the tab while it is still loading.
+      let again: Record<string, unknown> | undefined;
+      const titleDeadline = Date.now() + 5_000;
+      while (Date.now() < titleDeadline) {
+        again = await callTool("listTabs");
+        if (JSON.stringify(again).includes("Form result")) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       const tabs = JSON.stringify(again);
       expect(tabs).toContain("Form result");
       expect(tabs).toContain(String(before.activeId));
