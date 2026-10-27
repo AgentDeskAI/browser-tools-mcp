@@ -64,6 +64,36 @@ describe("decideApiAccess", () => {
     expect(decision).toMatchObject({ ok: false, code: "TOOL_DISABLED" });
   });
 
+  it("gates the timeline on the timeline tools", () => {
+    expect(
+      decideApiAccess({
+        method: "GET",
+        path: "/timeline",
+        query: {},
+        enabled: new Set(["listTracked"]),
+        actionsAllowed: false,
+      }).ok
+    ).toBe(true);
+    expect(
+      decideApiAccess({
+        method: "GET",
+        path: "/timeline/logs",
+        query: {},
+        enabled: new Set(["listTracked"]),
+        actionsAllowed: false,
+      }).ok
+    ).toBe(false);
+    expect(
+      decideApiAccess({
+        method: "GET",
+        path: "/timeline/logs",
+        query: { chromeTabId: "4" },
+        enabled: new Set(["getTimeline"]),
+        actionsAllowed: false,
+      }).ok
+    ).toBe(true);
+  });
+
   it("maps an audit artifact back to the one audit tool", () => {
     const onlySeo = new Set(["runSEOAudit"]);
     expect(

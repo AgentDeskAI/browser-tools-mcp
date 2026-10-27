@@ -27,6 +27,7 @@ import {
   NAVIGATE_BROWSER_DESCRIPTION,
 } from "../tabs/contract.js";
 import { TAB_TOOLS } from "../tabs/tools.js";
+import { TIMELINE_TOOLS } from "../timeline/tools.js";
 
 const log = createLogger("mcp");
 
@@ -270,6 +271,7 @@ function auditTool(
 
 const TOOLS: ToolDefinition[] = [
   ...TAB_TOOLS,
+  ...TIMELINE_TOOLS,
   {
     name: "listBrowserTabs",
     register(server, client) {

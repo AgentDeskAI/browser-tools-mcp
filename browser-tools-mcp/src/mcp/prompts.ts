@@ -43,7 +43,14 @@ evidence before changing code.
 Never assume a log line is current — check timestamps against the reproduction.
 Captured values are redacted where they looked like credentials; if a value
 reads as [REDACTED] that is this tool protecting the user, not the application
-misbehaving.`;
+misbehaving.
+
+The 8-hour log is separate from the DevTools buffer and stays off until the
+user enables a tab or a site in the extension popup. Call listTracked to see
+what they enabled. Call getTimeline with chromeTabId or origin, and from/to
+or lastMinutes. If reason is not-enabled or outside-window, the arrays are
+empty on purpose. Do not fill that gap from getConsoleLogs, and do not guess
+a different tab.`;
 
 const AUDIT_MODE = `You are running a quality audit of a live page using BrowserTools MCP.
 

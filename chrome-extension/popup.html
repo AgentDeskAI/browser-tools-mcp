@@ -36,6 +36,10 @@
         font-size: 15px;
         margin: 0 0 8px;
       }
+      h2 {
+        font-size: 13px;
+        margin: 16px 0 8px;
+      }
       p {
         margin: 0 0 12px;
         color: var(--muted);
@@ -107,9 +111,29 @@
       This asks Chrome for access. It does not hide the debugging banner, and the debugging banner
       stays off unless a DevTools capture attaches the debugger.
     </p>
+    <h2>8-hour log</h2>
+    <p>
+      Off until you turn it on. Console and network for a checked tab or site stay on this machine
+      for 8 hours, then they are deleted. Cookies and Authorization are removed before they are
+      stored.
+    </p>
+    <label class="switch">
+      <input type="checkbox" id="trackTab" />
+      <span>Record this tab</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="trackOrigin" />
+      <span>Record this site</span>
+    </label>
+    <p class="note" id="trackNote">
+      This does not hide the debugging banner and does not click or drive the page. An agent can
+      read the log only for a tab or site you enabled, and only inside the last 8 hours. Sites
+      other than this machine need “Allow reading pages you have open” above.
+    </p>
     <p id="saved"></p>
 
     <script src="gates.js"></script>
+    <script src="timeline.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -8,7 +8,7 @@
  */
 import { parseCli, readPackageVersion } from "./cli.js";
 import { createConnector } from "./connector/connector.js";
-import { clearSessionFile, writeSessionFile } from "./util/session.js";
+import { clearSessionFile, sessionDir, writeSessionFile } from "./util/session.js";
 import { createLogger } from "./util/logger.js";
 import { getDefaultScreenshotDir } from "./util/paths.js";
 
@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
     ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
     ...(options.extensionId ? { extensionId: options.extensionId } : {}),
+    timelineDir: sessionDir(),
   });
 
   writeSessionFile({

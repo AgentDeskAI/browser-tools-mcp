@@ -4,7 +4,7 @@ import {
   InProcessConnectorClient,
   type ConnectorClient,
 } from "./mcp/client.js";
-import { readSessionFile, writeSessionFile, clearSessionFile } from "./util/session.js";
+import { readSessionFile, sessionDir, writeSessionFile, clearSessionFile } from "./util/session.js";
 import { createLogger } from "./util/logger.js";
 import { readPackageVersion, type CliOptions } from "./cli.js";
 
@@ -100,6 +100,12 @@ class UnavailableConnectorClient implements ConnectorClient {
     return this.#fail();
   }
   readArtifact(): Promise<never> {
+    return this.#fail();
+  }
+  listTracked(): Promise<never> {
+    return this.#fail();
+  }
+  getTimeline(): Promise<never> {
     return this.#fail();
   }
 }
@@ -203,6 +209,7 @@ export async function createRuntime(options: CliOptions): Promise<Runtime> {
       ...(options.enabledTools ? { enabledTools: options.enabledTools } : {}),
       ...(options.disabledTools ? { disabledTools: options.disabledTools } : {}),
       ...(options.extensionId ? { extensionId: options.extensionId } : {}),
+      timelineDir: sessionDir(),
     });
 
     writeSessionFile({
