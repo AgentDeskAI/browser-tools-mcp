@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
+
+Tab awareness, and one report for pages an extension cannot script.
+2.0.5 was the CLI-only release: `browser-tools` on top of the 2.0.4
+hardening packages. It did not include the changes in this section.
 
 - **Non-scriptable pages are reported the same way everywhere.** `chrome://`,
   DevTools, `view-source:`, the Chrome Web Store, extension pages, and the
@@ -17,6 +21,10 @@
   used by `listBrowserTabs`. The tab list does not claim to see every open tab.
   Background navigation stays in the visible window. Soft click and type report
   `worked` or `needs a real gesture`.
+- The extension manifest is 2.1.0. It adds the `scripting` permission used by
+  the no-debugger tab tools.
+- `@agentdeskai/browser-tools-server` now requires
+  `@agentdeskai/browser-tools-mcp` `^2.1.0`.
 
 ## 2.0.5
 
