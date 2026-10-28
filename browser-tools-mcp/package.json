@@ -48,9 +48,9 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "chrome-launcher": "^1.2.1",
+    "chrome-launcher": "^1.2.2",
     "express": "^5.2.1",
-    "lighthouse": "^13.4.1",
+    "lighthouse": "^13.6.0",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },

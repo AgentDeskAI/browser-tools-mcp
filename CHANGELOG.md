@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Audits run on current stable Chrome.** Lighthouse is 13.6 and
+  chrome-launcher is 1.2.2. The audit browser lets Chrome pick its debugging
+  port, and the end-to-end suite loads the extension in Chromium 156.
 - **Non-scriptable pages are reported the same way everywhere.** `chrome://`,
   DevTools, `view-source:`, the Chrome Web Store, extension pages, and the
   built-in PDF viewer come back as metadata only (`access: "metadata-only"`,
