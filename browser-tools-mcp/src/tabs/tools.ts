@@ -3,10 +3,12 @@ import { z } from "zod";
 
 import type { ConnectorClient } from "../mcp/client.js";
 import {
+  ACT_ON_REF_DESCRIPTION,
   CHROME_TAB_ID,
   LIST_TABS_DESCRIPTION,
   NAVIGATE_TAB_DESCRIPTION,
   READ_TAB_DESCRIPTION,
+  SNAPSHOT_TAB_DESCRIPTION,
   SOFT_CLICK_DESCRIPTION,
   SOFT_TYPE_DESCRIPTION,
 } from "./contract.js";
@@ -38,6 +40,48 @@ const selectorInput = z
   .min(1)
   .max(500)
   .describe("CSS selector for the element in that tab. Not a DevTools-connected tab id.");
+
+const refInput = z
+  .string()
+  .regex(/^e[1-9][0-9]{0,4}$/)
+  .describe("Stable ref from snapshotTab, such as e1. Not a chromeTabId or a DevTools-connected tabId.");
+
+const semanticStateShape = z.object({
+  disabled: z.boolean().optional(),
+  checked: z.union([z.boolean(), z.literal("mixed")]).optional(),
+  expanded: z.boolean().optional(),
+  pressed: z.union([z.boolean(), z.literal("mixed")]).optional(),
+  selected: z.boolean().optional(),
+  required: z.boolean().optional(),
+  invalid: z.boolean().optional(),
+  readonly: z.boolean().optional(),
+});
+
+const semanticNodeShape = {
+  ref: z.string(),
+  role: z.string(),
+  name: z.string(),
+  text: z.string(),
+  state: semanticStateShape,
+  visible: z.boolean(),
+  depth: z.number().int(),
+};
+
+const pageDeltaShape = {
+  urlChanged: z.boolean(),
+  previousUrl: z.string(),
+  url: z.string(),
+  consoleErrors: z.array(z.string()),
+  failedRequests: z.array(z.object({ url: z.string(), status: z.number().int().nullable() })),
+};
+
+const softOutcomeShape = {
+  chromeTabId: z.number().int(),
+  outcome: z.enum(["worked", "needs a real gesture"]),
+  reason: z.string().nullable(),
+  detail: z.string(),
+  trusted: z.literal(false),
+};
 
 const safetyShape = {
   debuggerCalls: z.number().int(),
@@ -96,6 +140,11 @@ export async function invokeTabTool(
         if (chromeTabId === undefined) return fail(new Error("chromeTabId is required"));
         return ok((await client.readChromeTab({ chromeTabId })) as unknown as Record<string, unknown>);
       }
+      case "snapshotTab": {
+        const chromeTabId = chromeTabIdFrom(args);
+        if (chromeTabId === undefined) return fail(new Error("chromeTabId is required"));
+        return ok((await client.snapshotChromeTab({ chromeTabId })) as unknown as Record<string, unknown>);
+      }
       case "navigateTab": {
         const url = args["url"];
         if (typeof url !== "string" || !url.trim()) return fail(new Error("url is required"));
@@ -130,6 +179,25 @@ export async function invokeTabTool(
             selector,
             text,
             submit: args["submit"] === true,
+          })) as unknown as Record<string, unknown>
+        );
+      }
+      case "actOnRef": {
+        const chromeTabId = chromeTabIdFrom(args);
+        const ref = args["ref"];
+        const op = args["op"];
+        if (chromeTabId === undefined || typeof ref !== "string") {
+          return fail(new Error("chromeTabId and ref are required"));
+        }
+        if (op !== "click" && op !== "type") return fail(new Error("op must be click or type"));
+        const text = args["text"];
+        if (op === "type" && typeof text !== "string") return fail(new Error("text is required"));
+        return ok(
+          (await client.actOnChromeTabRef({
+            chromeTabId,
+            ref,
+            op,
+            ...(op === "type" && typeof text === "string" ? { text, submit: args["submit"] === true } : {}),
           })) as unknown as Record<string, unknown>
         );
       }
@@ -253,13 +321,7 @@ export const TAB_TOOLS: TabToolDefinition[] = [
           title: "Soft click",
           description: SOFT_CLICK_DESCRIPTION,
           inputSchema: { chromeTabId: chromeTabIdInput, selector: selectorInput },
-          outputSchema: {
-            chromeTabId: z.number().int(),
-            outcome: z.enum(["worked", "needs a real gesture"]),
-            reason: z.string().nullable(),
-            detail: z.string(),
-            trusted: z.literal(false),
-          },
+          outputSchema: softOutcomeShape,
           annotations: {
             title: "Soft click",
             readOnlyHint: false,
@@ -289,13 +351,7 @@ export const TAB_TOOLS: TabToolDefinition[] = [
               .optional()
               .describe("After a successful type, submit the surrounding form with requestSubmit()."),
           },
-          outputSchema: {
-            chromeTabId: z.number().int(),
-            outcome: z.enum(["worked", "needs a real gesture"]),
-            reason: z.string().nullable(),
-            detail: z.string(),
-            trusted: z.literal(false),
-          },
+          outputSchema: softOutcomeShape,
           annotations: {
             title: "Soft type",
             readOnlyHint: false,
@@ -305,6 +361,74 @@ export const TAB_TOOLS: TabToolDefinition[] = [
           },
         },
         async (args) => invokeTabTool("softType", client, args) as Promise<TabToolResult>
+      );
+    },
+  },
+  {
+    name: "snapshotTab",
+    register(server, client) {
+      server.registerTool(
+        "snapshotTab",
+        {
+          title: "Semantic page map",
+          description: SNAPSHOT_TAB_DESCRIPTION,
+          inputSchema: { chromeTabId: chromeTabIdInput },
+          outputSchema: {
+            chromeTabId: z.number().int(),
+            url: z.string(),
+            title: z.string(),
+            site: z.string(),
+            asleep: z.boolean(),
+            frozen: z.boolean(),
+            skipped: z.string().nullable(),
+            hostAccess: z.boolean(),
+            truncated: z.boolean(),
+            nodes: z.array(z.object(semanticNodeShape)),
+          },
+          annotations: {
+            title: "Semantic page map",
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+        async (args) => invokeTabTool("snapshotTab", client, args) as Promise<TabToolResult>
+      );
+    },
+  },
+  {
+    name: "actOnRef",
+    register(server, client) {
+      server.registerTool(
+        "actOnRef",
+        {
+          title: "Act on a page ref",
+          description: ACT_ON_REF_DESCRIPTION,
+          inputSchema: {
+            chromeTabId: chromeTabIdInput,
+            ref: refInput,
+            op: z.enum(["click", "type"]).describe("click or type. Type reuses the soft type path."),
+            text: z.string().max(20000).optional().describe("Text to insert when op is type. Password fields are refused."),
+            submit: z
+              .boolean()
+              .optional()
+              .describe("After a successful type, submit the surrounding form with requestSubmit()."),
+          },
+          outputSchema: {
+            ...softOutcomeShape,
+            ref: z.string(),
+            delta: z.object(pageDeltaShape),
+          },
+          annotations: {
+            title: "Act on a page ref",
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+        },
+        async (args) => invokeTabTool("actOnRef", client, args) as Promise<TabToolResult>
       );
     },
   },

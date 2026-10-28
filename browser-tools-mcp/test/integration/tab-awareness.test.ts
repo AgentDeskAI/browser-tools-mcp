@@ -103,6 +103,46 @@ describe("chrome.tabs tools", () => {
         trusted: false,
         safety: { debuggerCalls: 0, focusChanges: 0 },
       }),
+      onSnapshotChromeTab: () => ({
+        ok: true,
+        safety: { debuggerCalls: 0, focusChanges: 0 },
+        snapshot: {
+          url: "http://127.0.0.1:3000/app",
+          title: "Fixture",
+          asleep: false,
+          frozen: false,
+          skipped: null,
+          hostAccess: true,
+          truncated: false,
+          nodes: [
+            {
+              ref: "e1",
+              role: "button",
+              name: "Run check",
+              text: "Run check",
+              state: {},
+              visible: true,
+              depth: 1,
+            },
+          ],
+        },
+      }),
+      onActChromeTab: (msg) => ({
+        ok: true,
+        chromeTabId: msg.chromeTabId,
+        ref: msg.ref,
+        outcome: "worked",
+        reason: null,
+        detail: "Untrusted click was delivered to the element.",
+        trusted: false,
+        delta: {
+          previousUrl: "http://127.0.0.1:3000/app",
+          url: "http://127.0.0.1:3000/app?changed=1",
+          consoleErrors: ["MARKER-MAP-ERROR"],
+          failedRequests: [{ url: "http://127.0.0.1:3000/api/fail", status: 500 }],
+        },
+        safety: { debuggerCalls: 0, focusChanges: 0 },
+      }),
     });
     await worker.connect();
     worker.send({ type: "capability-state", popupEnabled: true });
@@ -225,7 +265,72 @@ describe("chrome.tabs tools", () => {
     expect(navigate?.description).toContain("visible window");
     const called = await mcp.callTool({ name: "softType", arguments: { chromeTabId: 4, selector: "#name", text: "Ada" } });
     expect(called.isError).toBeUndefined();
+    const mapTool = listed.tools.find((tool) => tool.name === "snapshotTab");
+    const actTool = listed.tools.find((tool) => tool.name === "actOnRef");
+    expect(mapTool?.description).toContain("stable ref");
+    expect(mapTool?.description).not.toMatch(/computer[- ]use/i);
+    expect(actTool?.description).toContain("console errors");
+    expect(actTool?.description).not.toMatch(/computer[- ]use/i);
     await mcp.close();
     await server.close();
+  });
+
+  it("maps a tab without input permission and refuses an action until input is allowed", async () => {
+    await start(false);
+    const snapshot = await connector!.snapshotChromeTab({ chromeTabId: 4 });
+    expect(snapshot.nodes[0]).toMatchObject({ ref: "e1", role: "button", name: "Run check", visible: true });
+    await expect(connector!.actOnChromeTabRef({ chromeTabId: 4, ref: "e1", op: "click" })).rejects.toThrow(/input is not allowed/);
+    expect(worker!.received.some((message) => message.type === "act-chrome-tab")).toBe(false);
+  });
+
+  it("returns a what-changed delta after acting on a ref and refuses a focus change", async () => {
+    await start(true);
+    const client = new InProcessConnectorClient(connector!);
+    const acted = await invokeTool("actOnRef", client, { chromeTabId: 4, ref: "e1", op: "click" });
+    expect(acted.isError).toBeUndefined();
+    expect(acted.structuredContent).toMatchObject({
+      ref: "e1",
+      outcome: "worked",
+      trusted: false,
+      delta: {
+        urlChanged: true,
+        consoleErrors: ["MARKER-MAP-ERROR"],
+        failedRequests: [{ url: "http://127.0.0.1:3000/api/fail", status: 500 }],
+      },
+    });
+    const sent = worker!.received.filter((message) => message.type === "act-chrome-tab");
+    expect(sent.at(-1)).toMatchObject({ ref: "e1", op: "click", chromeTabId: 4 });
+
+    await worker!.close();
+    worker = new FakeExtension({
+      port: connector!.port,
+      role: "worker",
+      onCapabilityProbe: () => ({
+        popupEnabled: true,
+        panelEnabled: false,
+        liveUrl: "http://127.0.0.1:3000/app",
+        excludeOrigins: [],
+      }),
+      onActChromeTab: () => ({
+        ok: true,
+        outcome: "worked",
+        reason: null,
+        detail: "clicked",
+        trusted: false,
+        delta: {
+          previousUrl: "http://127.0.0.1:3000/app",
+          url: "http://127.0.0.1:3000/app",
+          consoleErrors: [],
+          failedRequests: [],
+        },
+        safety: { debuggerCalls: 0, focusChanges: 1 },
+      }),
+    });
+    await worker.connect();
+    worker.send({ type: "capability-state", popupEnabled: true });
+    await expect
+      .poll(async () => (await connector!.checkCapability("softClick", { tabId: 4 })).allowed)
+      .toBe(true);
+    await expect(connector!.actOnChromeTabRef({ chromeTabId: 4, ref: "e1", op: "click" })).rejects.toThrow(/change focus/);
   });
 });

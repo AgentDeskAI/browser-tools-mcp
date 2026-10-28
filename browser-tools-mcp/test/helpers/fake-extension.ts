@@ -19,6 +19,8 @@ export interface FakeExtensionOptions {
   onReadChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onNavigateChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onSoftInput?: (msg: any) => Promise<unknown> | unknown;
+  onSnapshotChromeTab?: (msg: any) => Promise<unknown> | unknown;
+  onActChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onStorage?: (msg: any) => Promise<unknown> | unknown;
   /** `worker` answers capability probes and is not a DevTools tab. */
   role?: "devtools" | "worker";
@@ -39,12 +41,25 @@ export class FakeExtension {
   }
 
   async connect(): Promise<void> {
+    try {
+      await this.#connectOnce();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/timed out|ECONNRESET|ECONNREFUSED|socket hang up/i.test(message)) throw error;
+      this.#ws?.terminate();
+      this.#ws = null;
+      await this.#connectOnce();
+    }
+  }
+
+  async #connectOnce(): Promise<void> {
     const { port, origin = EXAMPLE_CHROME_EXTENSION_ORIGIN, token: given } = this.#options;
     let token = given;
     if (!token) {
       const paired = await fetch(`http://127.0.0.1:${port}/.pair`, {
         method: "POST",
         headers: { Origin: origin },
+        signal: AbortSignal.timeout(3_000),
       });
       if (!paired.ok) {
         throw new Error(`Extension pairing failed (${paired.status})`);
@@ -66,9 +81,17 @@ export class FakeExtension {
     ws.on("message", (raw) => void this.#handle(raw));
 
     await new Promise<void>((resolve, reject) => {
-      const onError = (err: Error) => reject(err);
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error("Timed out opening the extension socket"));
+      }, 3_000);
+      const onError = (err: Error) => {
+        clearTimeout(timer);
+        reject(err);
+      };
       ws.once("error", onError);
       ws.once("open", () => {
+        clearTimeout(timer);
         ws.off("error", onError);
         resolve();
       });
@@ -179,6 +202,51 @@ export class FakeExtension {
               safety: { debuggerCalls: 0, focusChanges: 0 },
             };
         this.send({ type: "soft-input-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "snapshot-chrome-tab": {
+        const custom = this.#options.onSnapshotChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+              snapshot: {
+                url: "http://127.0.0.1/",
+                title: "",
+                asleep: false,
+                frozen: false,
+                skipped: null,
+                hostAccess: true,
+                truncated: false,
+                nodes: [],
+              },
+            };
+        this.send({ type: "chrome-tab-snapshot-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "act-chrome-tab": {
+        const custom = this.#options.onActChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              chromeTabId: msg.chromeTabId,
+              ref: msg.ref,
+              outcome: "worked",
+              reason: null,
+              detail: "ok",
+              trusted: false,
+              delta: {
+                urlChanged: false,
+                previousUrl: "http://127.0.0.1/",
+                url: "http://127.0.0.1/",
+                consoleErrors: [],
+                failedRequests: [],
+              },
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+            };
+        this.send({ type: "act-ref-result", requestId: msg.requestId, ...(payload as object) });
         break;
       }
       case "get-storage": {

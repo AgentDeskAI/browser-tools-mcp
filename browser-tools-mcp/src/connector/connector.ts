@@ -73,16 +73,20 @@ import {
   RestrictedPageError,
 } from "../restricted-page.js";
 import type {
+  ActOnRefResult,
   ChromeNavigateResult,
   ChromeTabListing,
   ChromeTabRead,
+  SemanticSnapshot,
   SoftInputResult,
 } from "../tabs/contract.js";
 import {
   assertTabActionSafe,
   normalizeChromeTabListing,
+  parseActOnRef,
   parseChromeNavigate,
   parseChromeTabRead,
+  parseSemanticSnapshot,
   parseSoftInput,
 } from "../tabs/listing.js";
 
@@ -284,6 +288,14 @@ export interface Connector {
     text: string;
     submit?: boolean;
   }): Promise<SoftInputResult>;
+  snapshotChromeTab(options: { chromeTabId: number }): Promise<SemanticSnapshot>;
+  actOnChromeTabRef(options: {
+    chromeTabId: number;
+    ref: string;
+    op: "click" | "type";
+    text?: string;
+    submit?: boolean;
+  }): Promise<ActOnRefResult>;
   close(): Promise<void>;
 }
 
@@ -622,6 +634,19 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     }
   });
 
+  api.post("/chrome-tabs/snapshot", async (req: Request, res: Response) => {
+    try {
+      const chromeTabId = req.body?.chromeTabId;
+      if (typeof chromeTabId !== "number") {
+        res.status(400).json({ error: "chromeTabId is required" });
+        return;
+      }
+      res.json(await snapshotChromeTab({ chromeTabId }));
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
   api.post("/chrome-tabs/navigate", async (req: Request, res: Response) => {
     try {
       const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
@@ -670,6 +695,37 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
           selector,
           text,
           submit: req.body?.submit === true,
+        })
+      );
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  });
+
+  api.post("/chrome-tabs/act", async (req: Request, res: Response) => {
+    try {
+      const chromeTabId = req.body?.chromeTabId;
+      const ref = req.body?.ref;
+      const op = req.body?.op;
+      const text = req.body?.text;
+      if (typeof chromeTabId !== "number" || typeof ref !== "string") {
+        res.status(400).json({ error: "chromeTabId and ref are required" });
+        return;
+      }
+      if (op !== "click" && op !== "type") {
+        res.status(400).json({ error: "op must be click or type" });
+        return;
+      }
+      if (op === "type" && typeof text !== "string") {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+      res.json(
+        await actOnChromeTabRef({
+          chromeTabId,
+          ref,
+          op,
+          ...(op === "type" && typeof text === "string" ? { text, submit: req.body?.submit === true } : {}),
         })
       );
     } catch (error) {
@@ -1225,7 +1281,9 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "navigate-chrome-result":
       case "chrome-tabs-result":
       case "chrome-tab-read-result":
+      case "chrome-tab-snapshot-result":
       case "soft-input-result":
+      case "act-ref-result":
       case "storage-result":
       case "capability-probe-result":
         resolvePending(connection, message);
@@ -1769,6 +1827,17 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     return parseChromeTabRead(options.chromeTabId, response["read"]);
   }
 
+  async function snapshotChromeTab(options: { chromeTabId: number }): Promise<SemanticSnapshot> {
+    const gate = await checkCapability("readTab", { tabId: options.chromeTabId });
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "snapshot-chrome-tab", {
+      chromeTabId: options.chromeTabId,
+      approvedUrl: gate.liveUrl,
+    });
+    assertTabActionSafe(response);
+    return parseSemanticSnapshot(options.chromeTabId, response["snapshot"]);
+  }
+
   async function navigateChromeTab(options: {
     url: string;
     chromeTabId?: number;
@@ -1819,6 +1888,27 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       ...(action === "softType" ? { text: options.text ?? "", submit: options.submit === true } : {}),
     });
     return parseSoftInput(options.chromeTabId, response);
+  }
+
+  async function actOnChromeTabRef(options: {
+    chromeTabId: number;
+    ref: string;
+    op: "click" | "type";
+    text?: string;
+    submit?: boolean;
+  }): Promise<ActOnRefResult> {
+    const gate = await checkCapability(options.op === "type" ? "softType" : "softClick", {
+      tabId: options.chromeTabId,
+    });
+    if (!gate.allowed) throw new ExtensionRequestError(gate.reason);
+    const response = await requestFromExtension(requireWorker(), "act-chrome-tab", {
+      op: options.op,
+      chromeTabId: options.chromeTabId,
+      ref: options.ref,
+      approvedUrl: gate.liveUrl,
+      ...(options.op === "type" ? { text: options.text ?? "", submit: options.submit === true } : {}),
+    });
+    return parseActOnRef(options.chromeTabId, options.ref, response);
   }
 
   async function close(): Promise<void> {
@@ -1875,6 +1965,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     navigateChromeTab,
     softClickChromeTab,
     softTypeChromeTab,
+    snapshotChromeTab,
+    actOnChromeTabRef,
     readStorage,
     runAudit,
     close,
@@ -1985,7 +2077,13 @@ function parseList(value: unknown): string[] | undefined {
   return undefined;
 }
 
-/** Binds the requested port, walking forward if it is taken. */
+/**
+ * Binds the requested port, walking forward if it is taken.
+ *
+ * A failed listen used to call listen() again without closing. Each failure
+ * left its listening callback attached, and on macOS that stack could sit
+ * there until the caller timed out.
+ */
 function listen(
   server: http.Server,
   host: string,
@@ -1998,21 +2096,25 @@ function listen(
 
     const tryListen = () => {
       const onError = (error: NodeJS.ErrnoException) => {
+        server.removeListener("listening", onListening);
         if (error.code === "EADDRINUSE" && remaining > 1 && startPort !== 0) {
           remaining -= 1;
           port += 1;
-          setImmediate(tryListen);
+          server.close(() => tryListen());
           return;
         }
         reject(error);
       };
 
-      server.once("error", onError);
-      server.listen(port, host, () => {
-        server.off("error", onError);
+      const onListening = () => {
+        server.removeListener("error", onError);
         const address = server.address();
         resolve(typeof address === "object" && address ? address.port : port);
-      });
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, host);
     };
 
     tryListen();

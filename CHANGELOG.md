@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Semantic page map.** `snapshotTab` reads a tab from `listTabs` without the
+  debugger and without changing focus. Each entry has a role, an accessible
+  name, text, state, visibility, and a stable ref. `actOnRef` clicks or types
+  that ref with the same untrusted path as `softClick` and `softType`, then
+  reports what changed: the URL, new console errors, and new failed network
+  requests.
 - **Non-scriptable pages are reported the same way everywhere.** `chrome://`,
   DevTools, `view-source:`, the Chrome Web Store, extension pages, and the
   built-in PDF viewer come back as metadata only (`access: "metadata-only"`,

@@ -135,6 +135,8 @@ describe("worker probe", () => {
     expect(worker).toContain("tabs.get");
     expect(worker).toContain("navigate-tab");
     expect(worker).toContain("list-chrome-tabs");
+    expect(worker).toContain("snapshot-chrome-tab");
+    expect(worker).toContain("act-chrome-tab");
     expect(worker).not.toMatch(/chrome\.debugger|api\.debugger|\.attach\(/);
     expect(worker).not.toContain("windows.update");
     expect(worker).not.toContain("executeScript");
@@ -153,6 +155,10 @@ describe("worker probe", () => {
     expect(actions).toContain("active: false");
     expect(actions).toContain("visible window");
     expect(page).toContain("requestSubmit");
+    expect(page).toContain("data-btmcp-ref");
+    expect(page).toContain("btmcpSemanticSnapshot");
+    expect(page).toContain("btmcpActOnRef");
+    expect(page).not.toMatch(/computer[- ]use/i);
     expect(page).toContain("insertText");
     expect(page).toContain("needs a real gesture");
     expect(safety).toContain("Refusing to change focus.");

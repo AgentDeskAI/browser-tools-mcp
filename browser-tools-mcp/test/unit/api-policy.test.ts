@@ -86,6 +86,37 @@ describe("decideApiAccess", () => {
     ).toBe("TOOL_DISABLED");
   });
 
+  it("treats a page-map read as a tool and an action on a ref as state-changing", () => {
+    expect(
+      decideApiAccess({
+        method: "POST",
+        path: "/chrome-tabs/snapshot",
+        query: {},
+        enabled,
+        actionsAllowed: false,
+      }).ok
+    ).toBe(true);
+    expect(
+      decideApiAccess({
+        method: "POST",
+        path: "/chrome-tabs/act",
+        query: {},
+        enabled,
+        actionsAllowed: false,
+      }).code
+    ).toBe("ACTION_NOT_CONFIRMED");
+    const withoutAct = new Set([...enabled].filter((name) => name !== "actOnRef"));
+    expect(
+      decideApiAccess({
+        method: "POST",
+        path: "/chrome-tabs/act",
+        query: {},
+        enabled: withoutAct,
+        actionsAllowed: true,
+      }).code
+    ).toBe("TOOL_DISABLED");
+  });
+
   it("leaves settings reads alone and gates settings writes", () => {
     expect(
       decideApiAccess({
