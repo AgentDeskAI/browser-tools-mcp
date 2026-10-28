@@ -1,0 +1,24 @@
+{
+  "name": "browser-tools-mcp",
+  "version": "0.1.0",
+  "description": "Monitor browser logs and control browsers from Codex via MCP",
+  "author": {
+    "name": "AgentDeskAI",
+    "url": "https://github.com/AgentDeskAI/browser-tools-mcp"
+  },
+  "homepage": "https://github.com/AgentDeskAI/browser-tools-mcp",
+  "repository": "https://github.com/AgentDeskAI/browser-tools-mcp",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Browser Tools MCP",
+    "shortDescription": "Monitor browser logs and control browsers from Codex via MCP",
+    "longDescription": "Monitor browser logs directly from Cursor and other MCP compatible IDEs. Enables browser debugging and monitoring capabilities.",
+    "category": "Browser",
+    "websiteURL": "https://github.com/AgentDeskAI/browser-tools-mcp"
+  }
+}
