@@ -4,7 +4,9 @@ import { defaultGatePolicy } from "../../src/gates/capability";
 import { TAB_COVERAGE } from "../../src/tabs/contract";
 import {
   normalizeChromeTabListing,
+  parseActOnRef,
   parseChromeNavigate,
+  parseSemanticSnapshot,
   parseSoftInput,
 } from "../../src/tabs/listing";
 
@@ -111,5 +113,104 @@ describe("tab action results", () => {
         safety: { debuggerCalls: 0, focusChanges: 0 },
       })
     ).toThrow(/without a reason/);
+  });
+});
+
+describe("semantic page map results", () => {
+  it("keeps role, name, text, state, visibility, and a stable ref, and strips secrets", () => {
+    const snapshot = parseSemanticSnapshot(4, {
+      url: "http://127.0.0.1:3000/map?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      title: "Map",
+      asleep: false,
+      frozen: false,
+      skipped: null,
+      hostAccess: true,
+      truncated: false,
+      nodes: [
+        {
+          ref: "e1",
+          role: "button",
+          name: "Run check",
+          text: "Run check",
+          state: { pressed: false },
+          visible: true,
+          depth: 1,
+        },
+        {
+          ref: "e2",
+          role: "checkbox",
+          name: "Agree",
+          text: "",
+          state: { checked: true, disabled: false },
+          visible: false,
+          depth: 2,
+        },
+        { ref: "not-a-ref", role: "button", name: "skip", text: "", state: {}, visible: true, depth: 1 },
+      ],
+    });
+    expect(snapshot.chromeTabId).toBe(4);
+    expect(snapshot.nodes).toHaveLength(2);
+    expect(snapshot.nodes[0]).toMatchObject({
+      ref: "e1",
+      role: "button",
+      name: "Run check",
+      visible: true,
+      state: { pressed: false },
+    });
+    expect(snapshot.nodes[1]?.state).toEqual({ checked: true });
+    expect(JSON.stringify(snapshot)).not.toContain("ghp_");
+  });
+
+  it("returns the what-changed delta and refuses a focus change", () => {
+    expect(
+      parseActOnRef(4, "e1", {
+        outcome: "worked",
+        reason: null,
+        detail: "Untrusted click was delivered to the element.",
+        trusted: true,
+        delta: {
+          urlChanged: false,
+          previousUrl: "http://127.0.0.1:3000/map",
+          url: "http://127.0.0.1:3000/map?changed=1",
+          consoleErrors: ["MARKER-MAP-ERROR", ""],
+          failedRequests: [{ url: "http://127.0.0.1:3000/api/fail", status: 500 }, { url: "/api/down", status: 0 }],
+        },
+        safety: { debuggerCalls: 0, focusChanges: 0 },
+      })
+    ).toEqual({
+      chromeTabId: 4,
+      ref: "e1",
+      outcome: "worked",
+      reason: null,
+      detail: "Untrusted click was delivered to the element.",
+      trusted: false,
+      delta: {
+        urlChanged: true,
+        previousUrl: "http://127.0.0.1:3000/map",
+        url: "http://127.0.0.1:3000/map?changed=1",
+        consoleErrors: ["MARKER-MAP-ERROR"],
+        failedRequests: [
+          { url: "http://127.0.0.1:3000/api/fail", status: 500 },
+          { url: "/api/down", status: null },
+        ],
+      },
+    });
+
+    expect(() =>
+      parseActOnRef(4, "e1", {
+        outcome: "worked",
+        detail: "",
+        delta: { previousUrl: "http://127.0.0.1/", url: "http://127.0.0.1/" },
+        safety: { debuggerCalls: 0, focusChanges: 1 },
+      })
+    ).toThrow(/change focus/);
+
+    expect(() =>
+      parseActOnRef(4, "e1", {
+        outcome: "worked",
+        detail: "",
+        safety: { debuggerCalls: 0, focusChanges: 0 },
+      })
+    ).toThrow(/what changed/);
   });
 });

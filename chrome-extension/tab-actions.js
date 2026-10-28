@@ -1,9 +1,10 @@
 /**
  * chrome.tabs actions for the service worker.
  *
- * List, read, background navigate, and soft click/type. No debugger API.
- * Navigation always passes active: false and never focuses a window.
- * Background navigate stays in the visible window.
+ * List, read, semantic snapshot, background navigate, and soft click/type.
+ * No debugger API. Navigation always passes active: false and never focuses
+ * a window. Background navigate stays in the visible window. Acting on a
+ * snapshot ref uses the same soft click and type gates.
  */
 var BTMCP_TABS = (function () {
   function storageGet(area, keys) {
@@ -166,6 +167,14 @@ var BTMCP_TABS = (function () {
 
   function softActEntry(command) {
     return btmcpSoftAct(command);
+  }
+
+  function semanticEntry() {
+    return btmcpSemanticSnapshot();
+  }
+
+  function actOnRefEntry(command) {
+    return btmcpActOnRef(command);
   }
 
   function watchOpened(chromeApi) {
@@ -550,10 +559,192 @@ var BTMCP_TABS = (function () {
     }
   }
 
+  function emptySnapshot(tab, extra) {
+    return Object.assign(
+      {
+        url: typeof tab.url === "string" ? tab.url : "",
+        title: typeof tab.title === "string" ? tab.title : "",
+        asleep: tab.discarded === true,
+        frozen: tab.frozen === true,
+        skipped: null,
+        hostAccess: false,
+        truncated: false,
+        nodes: [],
+      },
+      extra || {}
+    );
+  }
+
+  async function snapshot(chromeApi, message, respond) {
+    var chromeTabId = message.chromeTabId;
+    if (typeof chromeTabId !== "number") {
+      fail(respond, message.requestId, "chrome-tab-snapshot-result", "chromeTabId must be a chrome.tabs id from listTabs.");
+      return;
+    }
+    var state = await readHumanState(chromeApi);
+    var beforeSafety = BTMCP_SAFETY.snapshot();
+    try {
+      var tab = await chromeApi.tabs.get(chromeTabId);
+      if (!tab) throw new Error("Tab not found.");
+      if (tab.incognito === true) throw new Error("Incognito is skipped.");
+      if (excluded(tab.url || "", state.excludeOrigins)) throw new Error("origin is excluded");
+      var gate = BTMCP_GATES.confirmBeforeAct({
+        action: "readTab",
+        popupEnabled: state.popupEnabled,
+        panelEnabled: false,
+        approvedUrl: message.approvedUrl,
+        liveUrl: tab.url || "",
+        hideBanner: message.hideBanner === true,
+      });
+      if (!gate.allowed) throw new Error(gate.reason);
+      if (tab.discarded === true) {
+        respond(message.requestId, {
+          type: "chrome-tab-snapshot-result",
+          ok: true,
+          safety: delta(beforeSafety),
+          snapshot: emptySnapshot(tab, { asleep: true, skipped: "asleep", hostAccess: true }),
+        });
+        return;
+      }
+      if (tab.frozen === true) {
+        respond(message.requestId, {
+          type: "chrome-tab-snapshot-result",
+          ok: true,
+          safety: delta(beforeSafety),
+          snapshot: emptySnapshot(tab, { frozen: true, skipped: "frozen", hostAccess: true }),
+        });
+        return;
+      }
+      var blocked = unsupportedPage(tab.url || "");
+      if (blocked) {
+        respond(message.requestId, {
+          type: "chrome-tab-snapshot-result",
+          ok: true,
+          safety: delta(beforeSafety),
+          snapshot: emptySnapshot(tab, { skipped: blocked, hostAccess: false }),
+        });
+        return;
+      }
+      var granted = await hostGranted(chromeApi, tab.url);
+      if (!granted) {
+        respond(message.requestId, {
+          type: "chrome-tab-snapshot-result",
+          ok: true,
+          safety: delta(beforeSafety),
+          snapshot: emptySnapshot(tab, { skipped: "host access is not granted", hostAccess: false }),
+        });
+        return;
+      }
+      var injected = await runInTab(chromeApi, chromeTabId, "ISOLATED", semanticEntry);
+      var page = injected && injected[0] && injected[0].result ? injected[0].result : null;
+      if (!page || !Array.isArray(page.nodes)) throw new Error("The page map did not return nodes.");
+      respond(message.requestId, {
+        type: "chrome-tab-snapshot-result",
+        ok: true,
+        safety: delta(beforeSafety),
+        snapshot: emptySnapshot(tab, {
+          asleep: false,
+          frozen: false,
+          skipped: null,
+          hostAccess: true,
+          title: page.title || tab.title || "",
+          truncated: page.truncated === true,
+          nodes: page.nodes,
+        }),
+      });
+    } catch (error) {
+      fail(respond, message.requestId, "chrome-tab-snapshot-result", error);
+    }
+  }
+
+  function pageDelta(beforeUrl, afterUrl, pageDeltaValue) {
+    var reported = pageDeltaValue && typeof pageDeltaValue === "object" ? pageDeltaValue : {};
+    var previousUrl = typeof reported.previousUrl === "string" && reported.previousUrl ? reported.previousUrl : beforeUrl;
+    var nextUrl = typeof reported.url === "string" && reported.url ? reported.url : afterUrl || previousUrl;
+    if (afterUrl && afterUrl !== beforeUrl) nextUrl = afterUrl;
+    return {
+      urlChanged: nextUrl !== previousUrl,
+      previousUrl: previousUrl,
+      url: nextUrl,
+      consoleErrors: Array.isArray(reported.consoleErrors) ? reported.consoleErrors : [],
+      failedRequests: Array.isArray(reported.failedRequests) ? reported.failedRequests : [],
+    };
+  }
+
+  async function act(chromeApi, message, respond) {
+    var chromeTabId = message.chromeTabId;
+    var ref = message.ref;
+    var op = message.op === "type" ? "type" : "click";
+    if (typeof chromeTabId !== "number") {
+      fail(respond, message.requestId, "act-ref-result", "chromeTabId must be a chrome.tabs id from listTabs.");
+      return;
+    }
+    if (!btmcpValidRef(ref)) {
+      fail(respond, message.requestId, "act-ref-result", "ref must be a ref from snapshotTab");
+      return;
+    }
+    if (op === "type" && (typeof message.text !== "string" || message.text.length > 20000)) {
+      fail(respond, message.requestId, "act-ref-result", "text is required");
+      return;
+    }
+    var state = await readHumanState(chromeApi);
+    var beforeSafety = BTMCP_SAFETY.snapshot();
+    var beforeUrl = "";
+    try {
+      var tab = await chromeApi.tabs.get(chromeTabId);
+      if (!tab) throw new Error("Tab not found.");
+      beforeUrl = typeof tab.url === "string" ? tab.url : "";
+      if (tab.incognito === true) throw new Error("Incognito is skipped.");
+      if (tab.discarded === true) throw new Error("Tab is asleep. It was not reloaded.");
+      if (tab.frozen === true) throw new Error("Tab is frozen and was skipped.");
+      var blocked = unsupportedPage(beforeUrl);
+      if (blocked) throw new Error(blocked);
+      var gate = BTMCP_GATES.confirmBeforeAct({
+        action: op === "type" ? "softType" : "softClick",
+        popupEnabled: state.popupEnabled,
+        panelEnabled: false,
+        approvedUrl: message.approvedUrl,
+        liveUrl: beforeUrl,
+        hideBanner: message.hideBanner === true,
+      });
+      if (!gate.allowed) throw new Error(gate.reason);
+      var granted = await hostGranted(chromeApi, beforeUrl);
+      if (!granted) throw new Error("host access is not granted");
+      var injected = await runInTab(chromeApi, chromeTabId, "MAIN", actOnRefEntry, [
+        { op: op, ref: ref, text: message.text || "", submit: message.submit === true },
+      ]);
+      var result = injected && injected[0] ? injected[0].result : null;
+      if (!result || (result.outcome !== "worked" && result.outcome !== "needs a real gesture")) {
+        throw new Error("The action did not report an outcome.");
+      }
+      if (result.outcome === "needs a real gesture" && typeof result.reason !== "string") {
+        throw new Error("The action refused without a reason.");
+      }
+      var after = await chromeApi.tabs.get(chromeTabId);
+      var afterUrl = after && typeof after.url === "string" ? after.url : beforeUrl;
+      respond(message.requestId, {
+        type: "act-ref-result",
+        ok: true,
+        chromeTabId: chromeTabId,
+        ref: ref,
+        outcome: result.outcome,
+        reason: result.outcome === "worked" ? null : result.reason,
+        detail: typeof result.detail === "string" ? result.detail : "",
+        trusted: false,
+        delta: pageDelta(beforeUrl, afterUrl, result.delta),
+        safety: delta(beforeSafety),
+      });
+    } catch (error) {
+      fail(respond, message.requestId, "act-ref-result", error);
+    }
+  }
+
   return {
     list: list,
     read: read,
+    snapshot: snapshot,
     soft: soft,
+    act: act,
     navigateChrome: navigateChrome,
     navigateConnected: navigateConnected,
   };

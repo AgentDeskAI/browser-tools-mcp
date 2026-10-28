@@ -7,9 +7,15 @@ import {
   type ChromeNavigateResult,
   type ChromeTabHeading,
   type ChromeTabListing,
+  type ActOnRefResult,
   type ChromeTabRead,
   type ChromeTabSnapshotNode,
   type ChromeTabView,
+  type FailedRequestDelta,
+  type PageChangeDelta,
+  type SemanticNode,
+  type SemanticSnapshot,
+  type SemanticState,
   type ChromeWindowView,
   type GestureReason,
   type OpenedTab,
@@ -177,6 +183,118 @@ export function parseChromeNavigate(requestedUrl: string, payload: Record<string
     visibleWindowId,
     openedTabs: parseOpenedTabs(payload["openedTabs"]),
     safety,
+  };
+}
+
+const REF_PATTERN = /^e[1-9][0-9]{0,4}$/;
+
+function parseState(value: unknown): SemanticState {
+  const raw = asRecord(value) ?? {};
+  const state: SemanticState = {};
+  if (raw["disabled"] === true) state.disabled = true;
+  const checked = raw["checked"];
+  if (checked === true || checked === false || checked === "mixed") state.checked = checked;
+  if (raw["expanded"] === true || raw["expanded"] === false) state.expanded = raw["expanded"];
+  const pressed = raw["pressed"];
+  if (pressed === true || pressed === false || pressed === "mixed") state.pressed = pressed;
+  if (raw["selected"] === true || raw["selected"] === false) state.selected = raw["selected"];
+  if (raw["required"] === true) state.required = true;
+  if (raw["invalid"] === true) state.invalid = true;
+  if (raw["readonly"] === true) state.readonly = true;
+  return state;
+}
+
+export function parseSemanticSnapshot(chromeTabId: number, value: unknown): SemanticSnapshot {
+  const read = asRecord(value) ?? {};
+  const url = text(read["url"], 2000);
+  const nodes: SemanticNode[] = [];
+  if (Array.isArray(read["nodes"])) {
+    for (const item of read["nodes"].slice(0, 80)) {
+      const node = asRecord(item);
+      if (!node) continue;
+      const ref = typeof node["ref"] === "string" ? node["ref"] : "";
+      if (!REF_PATTERN.test(ref)) continue;
+      const depth = finiteNumber(node["depth"]) ?? 0;
+      nodes.push({
+        ref,
+        role: text(node["role"], 40),
+        name: text(node["name"], 120),
+        text: text(node["text"], 160),
+        state: parseState(node["state"]),
+        visible: node["visible"] === true,
+        depth: depth >= 0 && depth <= 40 ? depth : 0,
+      });
+    }
+  }
+  const skipped = typeof read["skipped"] === "string" && read["skipped"] ? read["skipped"].slice(0, 120) : null;
+  return {
+    chromeTabId,
+    url,
+    title: text(read["title"], 300),
+    site: siteOf(url),
+    asleep: read["asleep"] === true,
+    frozen: read["frozen"] === true,
+    skipped,
+    hostAccess: read["hostAccess"] === true,
+    truncated: read["truncated"] === true,
+    nodes,
+  };
+}
+
+function parseDelta(value: unknown): PageChangeDelta {
+  const delta = asRecord(value);
+  if (!delta) throw new Error("The action did not report what changed.");
+  const previousUrl = text(delta["previousUrl"], 2000);
+  const url = text(delta["url"], 2000);
+  const consoleErrors: string[] = [];
+  if (Array.isArray(delta["consoleErrors"])) {
+    for (const item of delta["consoleErrors"].slice(0, 8)) {
+      const line = text(item, 240);
+      if (line) consoleErrors.push(line);
+    }
+  }
+  const failedRequests: FailedRequestDelta[] = [];
+  if (Array.isArray(delta["failedRequests"])) {
+    for (const item of delta["failedRequests"].slice(0, 8)) {
+      const request = asRecord(item);
+      if (!request) continue;
+      const requestUrl = text(request["url"], 300);
+      const status = finiteNumber(request["status"]);
+      failedRequests.push({
+        url: requestUrl,
+        status: status !== null && status >= 100 && status <= 599 ? Math.trunc(status) : null,
+      });
+    }
+  }
+  return {
+    urlChanged: url !== previousUrl,
+    previousUrl,
+    url,
+    consoleErrors,
+    failedRequests,
+  };
+}
+
+export function parseActOnRef(chromeTabId: number, ref: string, payload: Record<string, unknown>): ActOnRefResult {
+  assertTabActionSafe(payload);
+  if (!REF_PATTERN.test(ref)) throw new Error("ref must be a ref from snapshotTab");
+  const outcome = payload["outcome"];
+  if (outcome !== "worked" && outcome !== "needs a real gesture") {
+    throw new Error("The action did not report worked or needs a real gesture.");
+  }
+  const reasonRaw = payload["reason"];
+  const reason = GESTURE_REASONS.find((entry) => entry === reasonRaw) ?? null;
+  if (outcome === "needs a real gesture" && !reason) {
+    throw new Error("The action refused without a reason.");
+  }
+  return {
+    chromeTabId,
+    ref,
+    outcome,
+    reason: outcome === "worked" ? null : reason,
+    detail: text(payload["detail"], 300),
+    trusted: false,
+    delta: parseDelta(payload["delta"]),
   };
 }
 

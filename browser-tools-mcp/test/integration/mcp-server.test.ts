@@ -75,8 +75,10 @@ describe("tool registration", () => {
         "navigateBrowser",
         "navigateTab",
         "readTab",
+        "snapshotTab",
         "softClick",
         "softType",
+        "actOnRef",
         "refreshBrowser",
         "runAccessibilityAudit",
         "runBestPracticesAudit",
@@ -110,6 +112,7 @@ describe("tool registration", () => {
       "getConnectionStatus",
       "listTabs",
       "readTab",
+      "snapshotTab",
     ]) {
       expect(byName.get(name)?.annotations?.readOnlyHint, name).toBe(true);
     }
@@ -122,6 +125,7 @@ describe("tool registration", () => {
     expect(byName.get("navigateTab")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("softClick")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("softType")?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get("actOnRef")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("wipeLogs")?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get("wipeLogs")?.annotations?.destructiveHint).toBe(true);
     expect(byName.get("refreshBrowser")?.annotations?.readOnlyHint).toBe(false);

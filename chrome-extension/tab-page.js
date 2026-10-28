@@ -1,9 +1,15 @@
 /**
  * Runs inside a tab via chrome.scripting.executeScript.
  *
- * btmcpReadPage stays in the isolated world. btmcpSoftAct runs in the page's
- * main world so the native value setter and execCommand reach React, Vue, and
- * rich editors. Neither function calls the debugger API or changes window focus.
+ * btmcpReadPage and btmcpSemanticSnapshot stay in the isolated world.
+ * btmcpSoftAct and btmcpActOnRef run in the page's main world so the native
+ * value setter and execCommand reach React, Vue, and rich editors.
+ * None of them calls the debugger API or focuses the browser window.
+ *
+ * A semantic snapshot stamps data-btmcp-ref on each mapped element. The same
+ * element keeps that ref until the document is replaced. Acting on a ref uses
+ * the soft click and type gates, then reports URL, console, and failed-request
+ * changes that happened after the action.
  */
 
 function btmcpScrubText(value) {
@@ -331,4 +337,454 @@ function btmcpTypeInto(element, text, submit) {
   var editorSubmit = btmcpMaybeSubmit(editor, submit);
   if (editorSubmit) return editorSubmit;
   return btmcpWorked(submit ? "Text inserted and the form submitted." : "Inserted text with execCommand.");
+}
+
+var BTMCP_DELTA_WAIT_MS = 300;
+var BTMCP_MAP_LIMIT = 80;
+var BTMCP_REF_ATTR = "data-btmcp-ref";
+var BTMCP_REF_SEQ = "data-btmcp-ref-seq";
+var BTMCP_WATCH_KEY = "__btmcpChangeWatch";
+
+function btmcpValidRef(ref) {
+  return typeof ref === "string" && /^e[1-9][0-9]{0,4}$/.test(ref);
+}
+
+function btmcpPageUrl() {
+  try {
+    if (typeof location !== "undefined" && location && typeof location.href === "string") return location.href;
+  } catch (error) {
+    /* a detached frame can throw on location */
+  }
+  return "";
+}
+
+function btmcpDeltaWaitMs() {
+  var value = typeof BTMCP_DELTA_WAIT_MS === "number" ? BTMCP_DELTA_WAIT_MS : 300;
+  if (!isFinite(value) || value < 0) return 300;
+  if (value > 1000) return 1000;
+  return value;
+}
+
+function btmcpTag(element) {
+  return String(element && element.tagName ? element.tagName : "").toUpperCase();
+}
+
+function btmcpFlatText(node) {
+  if (!node) return "";
+  var raw = "";
+  if (typeof node.innerText === "string" && node.innerText) raw = node.innerText;
+  else if (typeof node.textContent === "string") raw = node.textContent;
+  return btmcpScrubText(raw.replace(/\s+/g, " ").trim());
+}
+
+function btmcpInputType(element) {
+  return ((element.getAttribute && element.getAttribute("type")) || element.type || "").toLowerCase();
+}
+
+function btmcpAccessibleName(element) {
+  var tag = btmcpTag(element);
+  var type = btmcpInputType(element);
+  var labelledby = element.getAttribute && element.getAttribute("aria-labelledby");
+  if (labelledby && document.getElementById) {
+    var ids = String(labelledby).split(/\s+/);
+    var parts = [];
+    for (var i = 0; i < ids.length; i++) {
+      if (!ids[i]) continue;
+      var target = document.getElementById(ids[i]);
+      var piece = btmcpFlatText(target);
+      if (piece) parts.push(piece);
+    }
+    if (parts.length) return parts.join(" ").slice(0, 120);
+  }
+  var aria = element.getAttribute && element.getAttribute("aria-label");
+  if (aria && String(aria).trim()) return btmcpScrubText(String(aria).replace(/\s+/g, " ").trim()).slice(0, 120);
+  if (element.labels && element.labels.length) {
+    var fromLabels = btmcpFlatText(element.labels[0]);
+    if (fromLabels) return fromLabels.slice(0, 120);
+  }
+  if (element.id && document.getElementsByTagName) {
+    var labels = document.getElementsByTagName("label");
+    for (var l = 0; l < labels.length; l++) {
+      var label = labels[l];
+      var htmlFor = label.htmlFor || (label.getAttribute && label.getAttribute("for"));
+      if (htmlFor && htmlFor === element.id) {
+        var named = btmcpFlatText(label);
+        if (named) return named.slice(0, 120);
+      }
+    }
+  }
+  if (element.closest) {
+    var wrap = element.closest("label");
+    if (wrap && wrap !== element) {
+      var wrapped = btmcpFlatText(wrap);
+      if (wrapped) return wrapped.slice(0, 120);
+    }
+  }
+  if (tag === "IMG") {
+    var alt = element.getAttribute && element.getAttribute("alt");
+    if (alt && String(alt).trim()) return btmcpScrubText(String(alt).trim()).slice(0, 120);
+  }
+  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+    var text = btmcpFlatText(element);
+    if (text) return text.slice(0, 120);
+  }
+  var title = element.getAttribute && element.getAttribute("title");
+  if (title && String(title).trim()) return btmcpScrubText(String(title).trim()).slice(0, 120);
+  if (type === "password") return "password";
+  if (tag === "INPUT" || tag === "TEXTAREA") {
+    var placeholder = element.getAttribute && element.getAttribute("placeholder");
+    if (placeholder && String(placeholder).trim()) return btmcpScrubText(String(placeholder).trim()).slice(0, 120);
+  }
+  return "";
+}
+
+function btmcpElementText(element) {
+  var tag = btmcpTag(element);
+  var type = btmcpInputType(element);
+  if (type === "password" || type === "file" || type === "hidden") return "";
+  if (tag === "INPUT" || tag === "TEXTAREA") {
+    var value = element.value == null ? "" : String(element.value);
+    return btmcpScrubText(value.replace(/\s+/g, " ").trim()).slice(0, 160);
+  }
+  if (tag === "SELECT" && element.options && element.selectedIndex >= 0) {
+    return btmcpFlatText(element.options[element.selectedIndex]).slice(0, 160);
+  }
+  return btmcpFlatText(element).slice(0, 160);
+}
+
+function btmcpAttrFlag(element, name) {
+  var value = element.getAttribute && element.getAttribute(name);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "mixed") return "mixed";
+  return null;
+}
+
+function btmcpElementState(element, role) {
+  var state = {};
+  if (element.disabled === true || btmcpAttrFlag(element, "aria-disabled") === true) state.disabled = true;
+  var checkable =
+    role === "checkbox" ||
+    role === "radio" ||
+    role === "switch" ||
+    role === "menuitemcheckbox" ||
+    role === "menuitemradio" ||
+    (element.getAttribute && element.getAttribute("aria-checked") != null);
+  if (checkable) {
+    var checked = btmcpAttrFlag(element, "aria-checked");
+    if (checked === null && typeof element.checked === "boolean") checked = element.checked;
+    if (checked !== null) state.checked = checked;
+  }
+  var expanded = btmcpAttrFlag(element, "aria-expanded");
+  if (expanded === true || expanded === false) state.expanded = expanded;
+  var pressed = btmcpAttrFlag(element, "aria-pressed");
+  if (pressed !== null) state.pressed = pressed;
+  var selected = btmcpAttrFlag(element, "aria-selected");
+  if (selected === null && role === "option" && element.selected === true) selected = true;
+  if (selected === true || selected === false) state.selected = selected;
+  if (element.required === true || btmcpAttrFlag(element, "aria-required") === true) state.required = true;
+  if (btmcpAttrFlag(element, "aria-invalid") === true) state.invalid = true;
+  if (element.readOnly === true || btmcpAttrFlag(element, "aria-readonly") === true) state.readonly = true;
+  return state;
+}
+
+function btmcpImplicitRole(element) {
+  var explicit = element.getAttribute && element.getAttribute("role");
+  if (explicit && String(explicit).trim()) return String(explicit).trim().toLowerCase().split(/\s+/)[0];
+  var tag = btmcpTag(element);
+  if (tag === "A") return element.hasAttribute && element.hasAttribute("href") ? "link" : "";
+  if (tag === "BUTTON") return "button";
+  if (tag === "SUMMARY") return "button";
+  if (tag === "SELECT") return element.multiple ? "listbox" : "combobox";
+  if (tag === "TEXTAREA") return "textbox";
+  if (tag === "OPTION") return "option";
+  if (tag === "INPUT") {
+    var type = btmcpInputType(element) || "text";
+    if (type === "hidden") return "";
+    if (type === "button" || type === "submit" || type === "reset" || type === "image" || type === "file") return "button";
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    if (type === "range") return "slider";
+    if (type === "number") return "spinbutton";
+    if (type === "search") return "searchbox";
+    return "textbox";
+  }
+  if (tag === "IMG") return "img";
+  if (tag === "NAV") return "navigation";
+  if (tag === "MAIN") return "main";
+  if (tag === "FORM") return "form";
+  if (tag === "HEADER") return "banner";
+  if (tag === "FOOTER") return "contentinfo";
+  if (tag === "ASIDE") return "complementary";
+  if (tag === "DIALOG") return "dialog";
+  if (tag === "UL" || tag === "OL") return "list";
+  if (tag === "LI") return "listitem";
+  if (tag === "TABLE") return "table";
+  if (/^H[1-6]$/.test(tag)) return "heading";
+  if (element.isContentEditable) return "textbox";
+  return "";
+}
+
+function btmcpSkipSubtree(element) {
+  var tag = btmcpTag(element);
+  if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEMPLATE" || tag === "HEAD") return true;
+  if (element.hidden === true) return true;
+  if (element.hasAttribute && element.hasAttribute("hidden")) return true;
+  if (element.getAttribute && element.getAttribute("aria-hidden") === "true") return true;
+  var style = null;
+  try {
+    style = window.getComputedStyle ? window.getComputedStyle(element) : null;
+  } catch (error) {
+    style = null;
+  }
+  if (style && style.display === "none") return true;
+  return false;
+}
+
+function btmcpElementVisible(element) {
+  var style = null;
+  try {
+    style = window.getComputedStyle ? window.getComputedStyle(element) : null;
+  } catch (error) {
+    style = null;
+  }
+  if (style && (style.visibility === "hidden" || style.visibility === "collapse" || String(style.opacity) === "0")) {
+    return false;
+  }
+  var rect = element.getBoundingClientRect ? element.getBoundingClientRect() : null;
+  if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+  return true;
+}
+
+function btmcpRefOwner(ref) {
+  if (!document.querySelector || !btmcpValidRef(ref)) return null;
+  try {
+    return document.querySelector("[" + BTMCP_REF_ATTR + '="' + ref + '"]');
+  } catch (error) {
+    return null;
+  }
+}
+
+function btmcpAssignRef(element) {
+  var existing = element.getAttribute && element.getAttribute(BTMCP_REF_ATTR);
+  if (btmcpValidRef(existing) && btmcpRefOwner(existing) === element) return existing;
+  var root = document.documentElement || document.body;
+  var seq = 0;
+  if (root && root.getAttribute) {
+    seq = Number(root.getAttribute(BTMCP_REF_SEQ) || "0");
+    if (!isFinite(seq) || seq < 0) seq = 0;
+  }
+  var ref = "";
+  var guard = 0;
+  do {
+    seq += 1;
+    if (seq > 99999) seq = 1;
+    ref = "e" + seq;
+    guard += 1;
+  } while (btmcpRefOwner(ref) && guard < 5);
+  if (root && root.setAttribute) root.setAttribute(BTMCP_REF_SEQ, String(seq));
+  if (element.setAttribute) element.setAttribute(BTMCP_REF_ATTR, ref);
+  return ref;
+}
+
+function btmcpSemanticSnapshot() {
+  var nodes = [];
+  var truncated = false;
+  function consider(element, depth) {
+    if (!element || !element.tagName || truncated) return;
+    if (btmcpSkipSubtree(element)) return;
+    var role = btmcpImplicitRole(element);
+    if (role && role !== "presentation" && role !== "none") {
+      if (nodes.length >= BTMCP_MAP_LIMIT) {
+        truncated = true;
+        return;
+      }
+      nodes.push({
+        ref: btmcpAssignRef(element),
+        role: role,
+        name: btmcpAccessibleName(element),
+        text: btmcpElementText(element),
+        state: btmcpElementState(element, role),
+        visible: btmcpElementVisible(element),
+        depth: depth,
+      });
+    }
+    var children = element.children || [];
+    for (var i = 0; i < children.length; i++) consider(children[i], depth + 1);
+  }
+  var root = document.body || document.documentElement;
+  if (root) consider(root, 0);
+  return {
+    title: btmcpScrubText(document.title || "").slice(0, 200),
+    nodes: nodes,
+    truncated: truncated,
+  };
+}
+
+function btmcpPushCapped(list, item, cap) {
+  if (list.length >= cap) return;
+  list.push(item);
+}
+
+function btmcpNoteUrl(url) {
+  var raw = String(url || "");
+  try {
+    if (raw && typeof location !== "undefined" && location && location.href) raw = new URL(raw, location.href).href;
+  } catch (error) {
+    /* keep the raw string */
+  }
+  return btmcpScrubText(raw).slice(0, 300);
+}
+
+function btmcpEnsureWatch() {
+  var existing = window[BTMCP_WATCH_KEY];
+  if (existing && existing.installed) return existing;
+  var state = { installed: true, consoleErrors: [], failedRequests: [] };
+
+  function noteError(text) {
+    var scrubbed = btmcpScrubText(String(text == null ? "" : text)).replace(/\s+/g, " ").trim().slice(0, 240);
+    if (!scrubbed) return;
+    btmcpPushCapped(state.consoleErrors, scrubbed, 40);
+  }
+
+  function noteFailure(url, status) {
+    var code = typeof status === "number" && isFinite(status) ? status : null;
+    btmcpPushCapped(state.failedRequests, { url: btmcpNoteUrl(url), status: code }, 40);
+  }
+
+  if (window.console && typeof window.console.error === "function") {
+    var originalError = window.console.error;
+    window.console.error = function () {
+      try {
+        var parts = [];
+        for (var i = 0; i < arguments.length; i++) {
+          var value = arguments[i];
+          if (value instanceof Error) parts.push(value.message);
+          else parts.push(String(value));
+        }
+        noteError(parts.join(" "));
+      } catch (error) {
+        /* keep the page console working */
+      }
+      return originalError.apply(window.console, arguments);
+    };
+  }
+
+  if (window.addEventListener) {
+    window.addEventListener("error", function (event) {
+      var message = event && (event.message || (event.error && event.error.message));
+      noteError(message || "error");
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      var reason = event && event.reason;
+      noteError(reason instanceof Error ? reason.message : reason == null ? "unhandled rejection" : String(reason));
+    });
+  }
+
+  if (typeof window.fetch === "function") {
+    var originalFetch = window.fetch;
+    window.fetch = function (input) {
+      var requestUrl = "";
+      try {
+        if (typeof input === "string") requestUrl = input;
+        else if (input && typeof input.url === "string") requestUrl = input.url;
+      } catch (error) {
+        requestUrl = "";
+      }
+      return originalFetch.apply(this, arguments).then(
+        function (response) {
+          try {
+            if (response && typeof response.status === "number" && response.status >= 400) {
+              noteFailure((response && response.url) || requestUrl, response.status);
+            }
+          } catch (error) {
+            /* ignore observer failures */
+          }
+          return response;
+        },
+        function (error) {
+          noteFailure(requestUrl, null);
+          throw error;
+        }
+      );
+    };
+  }
+
+  if (window.XMLHttpRequest && window.XMLHttpRequest.prototype) {
+    var proto = window.XMLHttpRequest.prototype;
+    var originalOpen = proto.open;
+    var originalSend = proto.send;
+    if (typeof originalOpen === "function" && typeof originalSend === "function") {
+      proto.open = function (method, url) {
+        try {
+          this.__btmcpUrl = url;
+        } catch (error) {
+          /* the request still proceeds */
+        }
+        return originalOpen.apply(this, arguments);
+      };
+      proto.send = function () {
+        var xhr = this;
+        if (xhr.addEventListener) {
+          xhr.addEventListener("loadend", function () {
+            var status = xhr.status;
+            if (status === 0 || status >= 400) noteFailure(xhr.__btmcpUrl || xhr.responseURL || "", status === 0 ? null : status);
+          });
+        }
+        return originalSend.apply(this, arguments);
+      };
+    }
+  }
+
+  try {
+    Object.defineProperty(window, BTMCP_WATCH_KEY, { value: state, configurable: true });
+  } catch (error) {
+    window[BTMCP_WATCH_KEY] = state;
+  }
+  return state;
+}
+
+function btmcpWatchCursor() {
+  var watch = btmcpEnsureWatch();
+  return {
+    url: btmcpPageUrl(),
+    consoleAt: watch.consoleErrors.length,
+    networkAt: watch.failedRequests.length,
+  };
+}
+
+function btmcpWatchDelta(cursor) {
+  var watch = btmcpEnsureWatch();
+  var url = btmcpPageUrl();
+  var previous = cursor && typeof cursor.url === "string" ? cursor.url : "";
+  return {
+    urlChanged: url !== previous,
+    previousUrl: previous,
+    url: url,
+    consoleErrors: watch.consoleErrors.slice(cursor && cursor.consoleAt ? cursor.consoleAt : 0).slice(0, 8),
+    failedRequests: watch.failedRequests.slice(cursor && cursor.networkAt ? cursor.networkAt : 0).slice(0, 8),
+  };
+}
+
+function btmcpActOnRef(command) {
+  var ref = command && command.ref;
+  var cursor = btmcpWatchCursor();
+  function finish(result) {
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        result.delta = btmcpWatchDelta(cursor);
+        resolve(result);
+      }, btmcpDeltaWaitMs());
+    });
+  }
+  if (!btmcpValidRef(ref)) {
+    return finish(btmcpGesture("UI that needs the page drawn", "The ref is not from snapshotTab."));
+  }
+  var result = btmcpSoftAct({
+    op: command && command.op,
+    selector: "[" + BTMCP_REF_ATTR + '="' + ref + '"]',
+    text: command && command.text,
+    submit: command && command.submit === true,
+  });
+  return finish(result);
 }

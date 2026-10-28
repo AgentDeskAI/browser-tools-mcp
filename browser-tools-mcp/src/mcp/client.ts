@@ -19,9 +19,11 @@ import {
   type RestrictedPageKind,
 } from "../restricted-page.js";
 import type {
+  ActOnRefResult,
   ChromeNavigateResult,
   ChromeTabListing,
   ChromeTabRead,
+  SemanticSnapshot,
   SoftInputResult,
 } from "../tabs/contract.js";
 
@@ -103,6 +105,14 @@ export interface ConnectorClient {
     text: string;
     submit?: boolean;
   }): Promise<SoftInputResult>;
+  snapshotChromeTab(options: { chromeTabId: number }): Promise<SemanticSnapshot>;
+  actOnChromeTabRef(options: {
+    chromeTabId: number;
+    ref: string;
+    op: "click" | "type";
+    text?: string;
+    submit?: boolean;
+  }): Promise<ActOnRefResult>;
   storage(kinds: string[], options?: { tabId?: TabId }): Promise<Record<string, unknown>>;
   audit(
     category: AuditCategory,
@@ -211,6 +221,20 @@ export class InProcessConnectorClient implements ConnectorClient {
     submit?: boolean;
   }): Promise<SoftInputResult> {
     return this.#connector.softTypeChromeTab(options);
+  }
+
+  snapshotChromeTab(options: { chromeTabId: number }): Promise<SemanticSnapshot> {
+    return this.#connector.snapshotChromeTab(options);
+  }
+
+  actOnChromeTabRef(options: {
+    chromeTabId: number;
+    ref: string;
+    op: "click" | "type";
+    text?: string;
+    submit?: boolean;
+  }): Promise<ActOnRefResult> {
+    return this.#connector.actOnChromeTabRef(options);
   }
 
   async storage(
@@ -364,6 +388,20 @@ export class HttpConnectorClient implements ConnectorClient {
     submit?: boolean;
   }): Promise<SoftInputResult> {
     return this.#request("/api/chrome-tabs/soft-type", { method: "POST", body: options });
+  }
+
+  snapshotChromeTab(options: { chromeTabId: number }): Promise<SemanticSnapshot> {
+    return this.#request("/api/chrome-tabs/snapshot", { method: "POST", body: options });
+  }
+
+  actOnChromeTabRef(options: {
+    chromeTabId: number;
+    ref: string;
+    op: "click" | "type";
+    text?: string;
+    submit?: boolean;
+  }): Promise<ActOnRefResult> {
+    return this.#request("/api/chrome-tabs/act", { method: "POST", body: options });
   }
 
   async storage(

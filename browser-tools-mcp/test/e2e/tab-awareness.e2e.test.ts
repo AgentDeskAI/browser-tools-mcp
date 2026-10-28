@@ -218,4 +218,58 @@ describe("tab awareness without DevTools", () => {
     },
     180_000
   );
+
+  it.skipIf(!browserSupport.usable)(
+    "maps a background tab and reports what changed after acting on a ref",
+    async () => {
+      const sw = await extensionWorker();
+      await sw.evaluate(async () => {
+        const chromeApi = (globalThis as unknown as { chrome: any }).chrome;
+        await chromeApi.storage.session.set({ btmcpPopupSwitch: true });
+      });
+      const before = await browserState();
+      const opened = await callTool("navigateTab", { url: `${fixture.url}map` });
+      const chromeTabId = opened["chromeTabId"] as number;
+
+      let map: Record<string, unknown> | undefined;
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        map = await callTool("snapshotTab", { chromeTabId });
+        if (JSON.stringify(map["nodes"]).includes("Run check")) break;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      const nodes = map?.["nodes"] as { ref: string; role: string; name: string; visible: boolean }[];
+      const button = nodes.find((node) => node.name === "Run check");
+      const ghost = nodes.find((node) => node.name === "Ghost");
+      expect(button?.role).toBe("button");
+      expect(button?.ref).toMatch(/^e[1-9][0-9]*$/);
+      expect(ghost?.visible).toBe(false);
+      expect(JSON.stringify(nodes)).not.toContain("Secret control");
+
+      const again = await callTool("snapshotTab", { chromeTabId });
+      const againButton = (again["nodes"] as { ref: string; name: string }[]).find((node) => node.name === "Run check");
+      expect(againButton?.ref).toBe(button?.ref);
+
+      const acted = await callTool("actOnRef", { chromeTabId, ref: button?.ref, op: "click" });
+      expect(acted).toMatchObject({ outcome: "worked", trusted: false, ref: button?.ref });
+      const delta = acted["delta"] as {
+        urlChanged: boolean;
+        url: string;
+        consoleErrors: string[];
+        failedRequests: { url: string; status: number | null }[];
+      };
+      expect(delta.urlChanged).toBe(true);
+      expect(delta.url).toContain("changed=1");
+      expect(delta.consoleErrors.join("\n")).toContain("MARKER-MAP-ERROR");
+      expect(delta.failedRequests.some((request) => request.status === 500 && request.url.includes("/api/fail"))).toBe(true);
+
+      const after = await browserState();
+      expect(after.activeId).toBe(before.activeId);
+      expect(after.activeUrl).toBe(before.activeUrl);
+      expect(after.safety).toEqual(before.safety);
+      expect(page.url()).toBe(fixture.url);
+      expect(await extensionDebuggerAttached(chromeTabId)).toBe(false);
+    },
+    180_000
+  );
 });

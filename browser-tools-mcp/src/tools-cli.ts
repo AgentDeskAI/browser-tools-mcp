@@ -97,6 +97,8 @@ Examples:
   browser-tools getConnectionStatus
   browser-tools getConsoleLogs '{"limit":20}'
   browser-tools listTabs
+  browser-tools snapshotTab '{"chromeTabId":4}'
+  browser-tools --allow-actions actOnRef '{"chromeTabId":4,"ref":"e1","op":"click"}'
   browser-tools --allow-actions navigateBrowser '{"url":"http://localhost:3000/","tabId":1}'
   browser-tools --allow-actions navigateTab '{"url":"http://127.0.0.1:3000/","chromeTabId":4}'
 `;

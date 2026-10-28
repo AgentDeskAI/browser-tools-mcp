@@ -10,7 +10,7 @@ import { RESTRICTED_PAGE_MESSAGE } from "../restricted-page.js";
  *   connected to the connector. Pass it as `tabId` to the existing tools.
  * - A chrome.tabs id comes from listTabs. It is chrome.tabs.Tab.id for a tab
  *   the browser returned. Pass it as `chromeTabId` to listTabs, readTab,
- *   navigateTab, softClick, and softType.
+ *   snapshotTab, navigateTab, softClick, softType, and actOnRef.
  *
  * Chrome often uses the same integer for both when DevTools is open on that
  * tab. The tools still do not accept each other's ids: a DevTools-connected
@@ -94,6 +94,26 @@ export const SOFT_TYPE_DESCRIPTION =
   "Rich editors (contenteditable, ProseMirror, Lexical) are focused in the page and receive execCommand('insertText'). " +
   "Pass submit true to submit the surrounding form with requestSubmit(). " +
   "The result is outcome \"worked\" or \"needs a real gesture\" with a reason. A failed action is never reported as worked. " +
+  "Gated like input: popup switch, --allow-input (browser-tools CLI: --allow-actions), and the same origin rules.";
+
+export const SNAPSHOT_TAB_DESCRIPTION =
+  "Builds a semantic page map of a tab from listTabs. Each entry has a role, an accessible name, text, state, visibility, and a stable ref. " +
+  "chromeTabId is a chrome.tabs id from listTabs, not a DevTools-connected tabId from listBrowserTabs. " +
+  "Does not attach the debugger and does not change focus. At most 80 elements. " +
+  "The same element keeps its ref until the document is replaced. " +
+  "Private details are stripped in the browser before the result leaves the page. " +
+  "An asleep (discarded) tab is reported as asleep and is not reloaded. A frozen tab is skipped. " +
+  "chrome:// pages, the Chrome Web Store, and the PDF viewer cannot be mapped. " +
+  "Needs the popup switch and host access for that site.";
+
+export const ACT_ON_REF_DESCRIPTION =
+  "Clicks or types on a ref from snapshotTab, using the same untrusted click and type path as softClick and softType. " +
+  "Does not attach the debugger and does not change focus. " +
+  "chromeTabId is a chrome.tabs id from listTabs, not a DevTools-connected tabId from listBrowserTabs. " +
+  "op is click or type. A type uses the native value setter or execCommand('insertText'), and submit true uses form.requestSubmit(). " +
+  "The result is outcome \"worked\" or \"needs a real gesture\" with a reason, plus a short delta: whether the URL changed, " +
+  "console errors that appeared after the action, and network requests that failed after the action. " +
+  "A failed action is never reported as worked. " +
   "Gated like input: popup switch, --allow-input (browser-tools CLI: --allow-actions), and the same origin rules.";
 
 export const SOFT_OUTCOMES = ["worked", "needs a real gesture"] as const;
@@ -201,4 +221,69 @@ export interface SoftInputResult {
   trusted: false;
 }
 
-export const TAB_TOOL_NAMES = ["listTabs", "readTab", "navigateTab", "softClick", "softType"] as const;
+export interface SemanticState {
+  disabled?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+  pressed?: boolean | "mixed";
+  selected?: boolean;
+  required?: boolean;
+  invalid?: boolean;
+  readonly?: boolean;
+}
+
+export interface SemanticNode {
+  ref: string;
+  role: string;
+  name: string;
+  text: string;
+  state: SemanticState;
+  visible: boolean;
+  depth: number;
+}
+
+export interface SemanticSnapshot {
+  chromeTabId: number;
+  url: string;
+  title: string;
+  site: string;
+  asleep: boolean;
+  frozen: boolean;
+  skipped: string | null;
+  hostAccess: boolean;
+  truncated: boolean;
+  nodes: SemanticNode[];
+}
+
+export interface FailedRequestDelta {
+  url: string;
+  status: number | null;
+}
+
+export interface PageChangeDelta {
+  urlChanged: boolean;
+  previousUrl: string;
+  url: string;
+  consoleErrors: string[];
+  failedRequests: FailedRequestDelta[];
+}
+
+export interface ActOnRefResult {
+  chromeTabId: number;
+  ref: string;
+  outcome: SoftOutcome;
+  reason: GestureReason | null;
+  detail: string;
+  trusted: false;
+  delta: PageChangeDelta;
+}
+
+export const TAB_TOOL_NAMES = [
+  "listTabs",
+  "readTab",
+  "snapshotTab",
+  "navigateTab",
+  "softClick",
+  "softType",
+  "actOnRef",
+] as const;

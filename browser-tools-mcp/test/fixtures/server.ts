@@ -118,6 +118,27 @@ export async function startFixtureServer(): Promise<FixtureServer> {
       return;
     }
 
+    if (url === "/map" || url.startsWith("/map?")) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html>
+        <html><head><meta charset="utf-8" /><title>Page map</title></head>
+        <body>
+          <h1>Page map</h1>
+          <button id="go" type="button">Run check</button>
+          <button id="ghost" type="button" style="visibility:hidden">Ghost</button>
+          <div hidden><button type="button">Secret control</button></div>
+          <label>Name <input id="name" name="name" /></label>
+          <script>
+            document.getElementById("go").addEventListener("click", function () {
+              console.error("MARKER-MAP-ERROR");
+              fetch("/api/fail").catch(function () {});
+              history.pushState({}, "", "/map?changed=1");
+            });
+          </script>
+        </body></html>`);
+      return;
+    }
+
     if (url === "/form" || url.startsWith("/form?")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`<!doctype html>

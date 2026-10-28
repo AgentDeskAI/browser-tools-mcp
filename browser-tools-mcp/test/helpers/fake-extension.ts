@@ -19,6 +19,8 @@ export interface FakeExtensionOptions {
   onReadChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onNavigateChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onSoftInput?: (msg: any) => Promise<unknown> | unknown;
+  onSnapshotChromeTab?: (msg: any) => Promise<unknown> | unknown;
+  onActChromeTab?: (msg: any) => Promise<unknown> | unknown;
   onStorage?: (msg: any) => Promise<unknown> | unknown;
   /** `worker` answers capability probes and is not a DevTools tab. */
   role?: "devtools" | "worker";
@@ -179,6 +181,51 @@ export class FakeExtension {
               safety: { debuggerCalls: 0, focusChanges: 0 },
             };
         this.send({ type: "soft-input-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "snapshot-chrome-tab": {
+        const custom = this.#options.onSnapshotChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+              snapshot: {
+                url: "http://127.0.0.1/",
+                title: "",
+                asleep: false,
+                frozen: false,
+                skipped: null,
+                hostAccess: true,
+                truncated: false,
+                nodes: [],
+              },
+            };
+        this.send({ type: "chrome-tab-snapshot-result", requestId: msg.requestId, ...(payload as object) });
+        break;
+      }
+      case "act-chrome-tab": {
+        const custom = this.#options.onActChromeTab;
+        const payload = custom
+          ? await custom(msg)
+          : {
+              ok: true,
+              chromeTabId: msg.chromeTabId,
+              ref: msg.ref,
+              outcome: "worked",
+              reason: null,
+              detail: "ok",
+              trusted: false,
+              delta: {
+                urlChanged: false,
+                previousUrl: "http://127.0.0.1/",
+                url: "http://127.0.0.1/",
+                consoleErrors: [],
+                failedRequests: [],
+              },
+              safety: { debuggerCalls: 0, focusChanges: 0 },
+            };
+        this.send({ type: "act-ref-result", requestId: msg.requestId, ...(payload as object) });
         break;
       }
       case "get-storage": {

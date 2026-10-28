@@ -101,9 +101,11 @@ setup and a silent one look the same.
 | `listBrowserTabs` | Tabs with DevTools open, addressed by a DevTools-connected `tabId` |
 | `listTabs` | Tabs `chrome.tabs` returns (not every open tab), addressed by `chromeTabId` |
 | `readTab` | Headings, excerpt, and a snapshot of a `chromeTabId`, without the debugger |
+| `snapshotTab` | Semantic page map of a `chromeTabId`: role, name, text, state, visibility, and a stable ref |
 | `navigateBrowser` | Load a URL in a DevTools-connected tab, without focusing it |
 | `navigateTab` | Load a URL in the background from `listTabs`, visible window only |
 | `softClick` / `softType` | Untrusted click or type. Result is `worked` or `needs a real gesture` |
+| `actOnRef` | Click or type a `snapshotTab` ref, then report URL, console, and failed-request changes |
 | `takeScreenshot` | Screenshot returned **as an image**, plus its file path |
 | `refreshBrowser` | Reloads the inspected tab |
 | `getBrowserStorage` | localStorage, sessionStorage and cookies (values gated) |
@@ -123,13 +125,15 @@ clients can auto-approve them safely.
 
 ### Tabs without DevTools
 
-`listTabs`, `readTab`, `navigateTab`, `softClick`, and `softType` use `chrome.tabs` and `chrome.scripting`. They do not attach the debugger, so they do not show the debugging banner, and they do not activate a tab or focus a window.
+`listTabs`, `readTab`, `snapshotTab`, `navigateTab`, `softClick`, `softType`, and `actOnRef` use `chrome.tabs` and `chrome.scripting`. They do not attach the debugger, so they do not show the debugging banner, and they do not activate a tab or focus a window.
 
 `chromeTabId` comes from `listTabs`. `tabId` on the other tools comes from `listBrowserTabs`. They are different id spaces. Pass each id only to the tool that issued it.
 
 `listTabs` reports the tabs `chrome.tabs` returns in the windows it returns. Other Arc Spaces, Little Arc, pinned favorites, split-view partners, and slept tabs may be missing. Incognito is skipped. This is not every open tab. Background navigation stays in the visible window until that is measured on Arc.
 
-The popup switch has to be on. Navigation and soft input also need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the `browser-tools` CLI. The same origin rules as other input apply. An asleep tab is reported and not reloaded. A soft action says `worked` or `needs a real gesture` and does not claim a failed action worked.
+The popup switch has to be on. Navigation, soft input, and `actOnRef` also need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the `browser-tools` CLI. The same origin rules as other input apply. An asleep tab is reported and not reloaded. A soft action says `worked` or `needs a real gesture` and does not claim a failed action worked.
+
+`snapshotTab` returns a semantic page map for one `chromeTabId`: role, accessible name, text, state, visibility, and a stable ref. `actOnRef` uses a ref from that map and the same untrusted click or type path as `softClick` and `softType`. After the action it reports a short delta: whether the URL changed, console errors that appeared, and network requests that failed. Neither call attaches the debugger or changes which tab is active.
 
 ### Several tabs at once
 

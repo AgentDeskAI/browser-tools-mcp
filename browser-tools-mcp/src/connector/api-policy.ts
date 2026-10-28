@@ -36,9 +36,11 @@ const AUDIT_TOOL: Record<AuditCategory, string> = {
 export const API_TOOL_NAMES: readonly string[] = [
   "listTabs",
   "readTab",
+  "snapshotTab",
   "navigateTab",
   "softClick",
   "softType",
+  "actOnRef",
   "listBrowserTabs",
   "getConsoleLogs",
   "getConsoleErrors",
@@ -104,9 +106,11 @@ function toolsForRequest(method: string, path: string, query: Record<string, unk
   if (method === "GET" && path === "/tabs") return ["listBrowserTabs"];
   if (method === "GET" && path === "/chrome-tabs") return ["listTabs"];
   if (method === "POST" && path === "/chrome-tabs/read") return ["readTab"];
+  if (method === "POST" && path === "/chrome-tabs/snapshot") return ["snapshotTab"];
   if (method === "POST" && path === "/chrome-tabs/navigate") return ["navigateTab"];
   if (method === "POST" && path === "/chrome-tabs/soft-click") return ["softClick"];
   if (method === "POST" && path === "/chrome-tabs/soft-type") return ["softType"];
+  if (method === "POST" && path === "/chrome-tabs/act") return ["actOnRef"];
   if (method === "POST" && path === "/screenshot") return ["takeScreenshot"];
   if (method === "POST" && path === "/refresh") return ["refreshBrowser"];
   if (method === "POST" && path === "/navigate") return ["navigateBrowser"];
@@ -148,6 +152,7 @@ export function isStateChangingRequest(method: string, path: string): boolean {
       path === "/chrome-tabs/navigate" ||
       path === "/chrome-tabs/soft-click" ||
       path === "/chrome-tabs/soft-type" ||
+      path === "/chrome-tabs/act" ||
       path === "/settings" ||
       path === "/tabs/select")
   );

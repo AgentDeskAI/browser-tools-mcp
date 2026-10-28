@@ -4,8 +4,9 @@
  * Owns the toolbar-popup switch (session storage, so it resets when the
  * browser quits) and answers capability probes with a tab URL read at that
  * moment via chrome.tabs.get. Tab list, read, background navigate, and soft
- * input go through BTMCP_TABS. Those paths do not call the debugger API and do
- * not activate a tab or focus a window. DevTools capture stays in devtools.js.
+ * input, the semantic page map, and acting on a ref go through BTMCP_TABS.
+ * Those paths do not call the debugger API and do not activate a tab or focus
+ * a window. DevTools capture stays in devtools.js.
  */
 importScripts("shared.js", "gates.js", "tab-safety.js", "tab-page.js", "tab-actions.js");
 
@@ -150,8 +151,12 @@ async function ensureConnected() {
         void BTMCP_TABS.navigateChrome(api, message, reply);
       } else if (message && message.type === "read-chrome-tab") {
         void BTMCP_TABS.read(api, message, reply);
+      } else if (message && message.type === "snapshot-chrome-tab") {
+        void BTMCP_TABS.snapshot(api, message, reply);
       } else if (message && message.type === "soft-input") {
         void BTMCP_TABS.soft(api, message, reply);
+      } else if (message && message.type === "act-chrome-tab") {
+        void BTMCP_TABS.act(api, message, reply);
       } else if (message && message.type === "ping") {
         sendOn(ws, { type: "pong", id: message.id });
       }
