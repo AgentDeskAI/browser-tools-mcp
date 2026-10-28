@@ -1,18 +1,14 @@
 # BrowserTools MCP
 
-**If you are still on 1.x, upgrade.** 1.x is unsupported. It has known critical
-vulnerabilities (remote code execution, unauthenticated access to captured
-data) that were fixed in 2.0 and will not be patched on 1.x. See
-[SECURITY.md](SECURITY.md) and [MIGRATION.md](MIGRATION.md).
+Give your AI coding agent eyes on the Chrome session you already have open:
+console, network, the selected element, screenshots, and Lighthouse. You stay
+logged in, on the page you were already on. It works with any MCP client:
+Cursor, Claude Code, Windsurf, Cline, Zed, Gemini CLI, and others.
 
-Give your AI coding agent eyes on the browser. BrowserTools MCP streams console
-output, network activity, screenshots and Lighthouse audits from **your real
-Chrome session** — the one already logged into your app — to any MCP-compatible
-client: Cursor, Claude Code, Windsurf, Cline, Zed, Gemini CLI, and others.
-
-> **Version 2.0 is a rewrite.** One process instead of three, no unauthenticated
-> local server, credentials scrubbed before they leave the browser, and a real
-> test suite. Coming from 1.x? Read [MIGRATION.md](MIGRATION.md).
+`browser-tools` mirrors those MCP tools from the shell. Separate tab tools can
+list tabs, read a page, navigate in the background, and soft-click or
+soft-type. They stay off until you allow them. They do not attach the debugger
+and do not steal focus. A soft click is not a trusted user gesture.
 
 ---
 
@@ -62,12 +58,30 @@ asdf, make sure your editor inherits the same version.
 That is the whole setup. **There is no second server to start** — the MCP server
 runs the connector itself.
 
+Coming from 1.x? See [MIGRATION.md](MIGRATION.md). How captured data is handled
+is in [SECURITY.md](SECURITY.md).
+
 ### 3. Use it
 
-Open Chrome DevTools (F12) on the page you want to inspect. Capture begins as
-soon as DevTools is open; the **BrowserTools** panel is only for settings and
-status. Then ask your agent something like *"check the console for errors"* or
-*"run an accessibility audit on this page"*.
+Open Chrome DevTools (F12) on the page you want the agent to see. Capture
+starts as soon as DevTools is open. The **BrowserTools** panel is for settings
+and status. Ask for console errors, a network call, the element selected in
+the Elements panel, a screenshot, or a Lighthouse audit.
+
+The same tools are on the `browser-tools` command, which ships in this
+package. Pass the tool name and one JSON object of arguments:
+
+```
+npx -y --package @agentdeskai/browser-tools-mcp@latest browser-tools getConsoleLogs '{"limit":20}'
+```
+
+`listTabs`, `readTab`, `navigateTab`, `softClick`, and `softType` work on tabs
+that do not have DevTools open. Turn on the extension popup switch first.
+Background navigation and soft click or type also need `--allow-input` on
+`browser-tools-mcp`, or `--allow-actions` on `browser-tools`. They do not
+attach the debugger and do not bring a tab or window to the front. A soft
+click is not a trusted user gesture. The result is `worked` or `needs a real
+gesture`.
 
 Not working? Run `npx @agentdeskai/browser-tools-mcp --doctor`, which reports
 exactly which piece is missing.
@@ -103,7 +117,7 @@ setup and a silent one look the same.
 | `readTab` | Headings, excerpt, and a snapshot of a `chromeTabId`, without the debugger |
 | `navigateBrowser` | Load a URL in a DevTools-connected tab, without focusing it |
 | `navigateTab` | Load a URL in the background from `listTabs`, visible window only |
-| `softClick` / `softType` | Untrusted click or type. Result is `worked` or `needs a real gesture` |
+| `softClick` / `softType` | Soft click or type. Not a trusted user gesture. Result is `worked` or `needs a real gesture` |
 | `takeScreenshot` | Screenshot returned **as an image**, plus its file path |
 | `refreshBrowser` | Reloads the inspected tab |
 | `getBrowserStorage` | localStorage, sessionStorage and cookies (values gated) |
@@ -123,13 +137,23 @@ clients can auto-approve them safely.
 
 ### Tabs without DevTools
 
-`listTabs`, `readTab`, `navigateTab`, `softClick`, and `softType` use `chrome.tabs` and `chrome.scripting`. They do not attach the debugger, so they do not show the debugging banner, and they do not activate a tab or focus a window.
+`listTabs`, `readTab`, `navigateTab`, `softClick`, and `softType` use
+`chrome.tabs` and `chrome.scripting`.
 
-`chromeTabId` comes from `listTabs`. `tabId` on the other tools comes from `listBrowserTabs`. They are different id spaces. Pass each id only to the tool that issued it.
+`chromeTabId` comes from `listTabs`. `tabId` on the DevTools tools comes from
+`listBrowserTabs`. Pass each id only to the tool that issued it.
 
-`listTabs` reports the tabs `chrome.tabs` returns in the windows it returns. Other Arc Spaces, Little Arc, pinned favorites, split-view partners, and slept tabs may be missing. Incognito is skipped. This is not every open tab. Background navigation stays in the visible window until that is measured on Arc.
+`listTabs` reports the tabs `chrome.tabs` returns in the windows it returns.
+Other Arc Spaces, Little Arc, pinned favorites, split-view partners, and slept
+tabs may be missing. Incognito is skipped. This is not every open tab.
+Background navigation stays in the visible window, and a tab in another window
+is refused.
 
-The popup switch has to be on. Navigation and soft input also need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the `browser-tools` CLI. The same origin rules as other input apply. An asleep tab is reported and not reloaded. A soft action says `worked` or `needs a real gesture` and does not claim a failed action worked.
+`listTabs` and `readTab` need the popup switch. Navigation and soft input also
+need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on
+`browser-tools`. Local origins are allowed by default; name any other http(s)
+origin with `--allow-input-origins`. An asleep tab is reported and not
+reloaded. A soft action says `worked` or `needs a real gesture`.
 
 ### Several tabs at once
 
@@ -141,8 +165,9 @@ Tools act on the **current tab** — the one you most recently opened DevTools o
 A tab whose connection drops and comes back does not steal that position, which
 is what used to make screenshots capture the wrong page. Every result reports
 the `tabId` and `url` it came from, plus `otherTabs`, so a wrong-tab answer is
-visible rather than silent. To target a specific tab, call `listBrowserTabs` and
-pass its `tabId` to any tool; pass `allTabs: true` to read across every tab.
+visible rather than silent. To target a specific DevTools-connected tab, call
+`listBrowserTabs` and pass its `tabId`. Pass `allTabs: true` to read across
+every connected tab.
 
 ### Large data stays out of the context window
 
@@ -163,6 +188,10 @@ offer the HAR; screenshots always link to the stored image, which is the only
 way to see one too large to inline. The last 20 full Lighthouse reports are kept
 under `audits/` in the screenshot directory.
 
+The CLI reads the same resources with `browser-tools resource <name> <scope>`
+(`console-history`, `network-history`, `network-har`, `screenshot`,
+`audit-report`).
+
 ### Keeping responses small
 
 Log payloads are the usual cause of a blown context window. Every read tool
@@ -181,10 +210,9 @@ Results are returned newest-first and always report `total` alongside
 This tool captures whatever your browser sees, so it treats that data carefully:
 
 - **Loopback only.** The connector binds `127.0.0.1` and refuses non-loopback
-  addresses. In 1.x it bound `0.0.0.0`, reachable by anyone on your network.
-- **The extension never leaves loopback.** 1.x scanned private network ranges
-  and adopted whichever host answered with a known string — meaning anyone on
-  shared Wi-Fi could receive your logs and screenshots. That scan is gone.
+  addresses.
+- **The extension stays on loopback.** It does not scan the network for a
+  connector.
 - **Authenticated.** The HTTP API requires a per-run bearer token. A token in
   the URL is refused. The extension WebSocket requires the same token; the
   extension collects it from a loopback pairing route that answers only a
@@ -197,10 +225,10 @@ This tool captures whatever your browser sees, so it treats that data carefully:
   unless explicitly requested.
 - **Cookie access is an optional permission** you grant from the panel, not
   something the extension holds by default.
-- **The debugger banner stays visible.** Chrome's "started debugging this
-  browser" warning is a safety control. It is intentional, and this project
-  never hides it. A capture path that does not attach the debugger simply
-  does not raise the banner; that is not a way to silence it.
+- **The debugger banner stays visible** when a tool attaches the debugger.
+  Chrome's "started debugging this browser" warning is a safety control, and
+  this project never hides it. Tab tools that do not attach the debugger do
+  not raise it.
 - **Audits stay off your internal network.** An audit accepts a url, and the
   caller may be a model reading untrusted pages. Link-local and cloud metadata
   addresses are never audited. Pages on localhost or a private network are
@@ -218,7 +246,9 @@ Report vulnerabilities per [SECURITY.md](SECURITY.md).
 
 ## Configuration
 
-Flags, or the matching `BROWSER_TOOLS_*` environment variables:
+Flags. Where a `BROWSER_TOOLS_*` environment variable exists, it matches the
+flag. `--allow-input`, `--allow-eval`, `--allow-input-origins`, and
+`--exclude-origins` are argv only.
 
 | Flag | Purpose |
 | --- | --- |
@@ -226,7 +256,10 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | `--screenshot-dir <path>` | Where screenshots are written |
 | `--only <a,b>` | Expose only these tools, on MCP and on the local API |
 | `--exclude <a,b>` | Hide these tools, on MCP and on the local API |
-| `--allow-actions` | Let the local API reload, capture, wipe, change settings and select a tab. Otherwise confirm that in the BrowserTools panel. The MCP tools in the process that embeds the connector are not gated by this |
+| `--allow-input` | Click, type, navigation, and soft input. Off unless passed. No environment variable. Also permits state-changing local API calls (reload, screenshot, wipe, settings, tab selection); otherwise confirm those in the BrowserTools panel |
+| `--allow-eval` | Script evaluation. Off unless passed. No environment variable |
+| `--allow-input-origins <o,o>` | http(s) origins where input and navigation are allowed besides local addresses. Argv only |
+| `--exclude-origins <o,o>` | http(s) origins that are never acted on. Argv only |
 | `--extension-id <id>` | Only this extension may pair and connect |
 | `--doctor` | Check the setup and exit |
 | `--verbose` | Print each captured entry as it arrives |
@@ -237,11 +270,20 @@ Flags, or the matching `BROWSER_TOOLS_*` environment variables:
 | `--audit-allow-origin <o,o>` | Loopback/private origins audits may target or load without an open tab |
 | `--audit-allow-private-network` | Let audits reach any loopback/private address except the audit's own ports (not recommended); also needed behind a fake-IP proxy |
 
+`browser-tools` takes `--allow-actions` for the input policy above. It does
+not accept `--allow-input` or `--allow-eval`.
+
+MCP tools in the process that embeds the connector call it directly. Reload,
+screenshot, and wipe from those tools are not held behind the local API check.
+Navigation and soft input still need `--allow-input`, and the tab tools still
+need the popup switch.
+
 To share one browser session between several MCP clients, start the connector
 once with `npx @agentdeskai/browser-tools-server` and every client will attach to
 it automatically. The local API uses the `--only`, `--exclude`,
-`--allow-actions` and `--extension-id` of that process. An attached client's
-`--only` / `--exclude` still hide tools from that client.
+`--allow-input`, and `--extension-id` of that process. An attached client's
+`--only` / `--exclude` still hide tools from that client. Input and audit
+flags count on the process that started the connector.
 
 ## Known limits
 
@@ -254,10 +296,9 @@ it automatically. The local API uses the `--only`, `--exclude`,
   past the read buffer newer MCP stdio transports enforce. If an image still
   cannot fit, it is written to disk and the tool returns the path instead of
   inlining it.
-- Console capture defaults to the DevTools protocol, which makes Chrome show a
-  "started debugging this browser" banner. That banner is intentional and is
-  never hidden. Switch the panel's capture mode to **Wrap page console** to
-  capture the console without attaching the debugger.
+- Console capture defaults to the DevTools protocol, which shows Chrome's
+  debugging banner. Switch the panel's capture mode to **Wrap page console**
+  to capture the console without attaching the debugger.
 - **Firefox is not verified.** The extension is written cross-browser — a
   `browser`/`chrome` shim, `browser_specific_settings`, and a capture mode that
   does not need `chrome.debugger` — but it has never been loaded in Firefox, and
