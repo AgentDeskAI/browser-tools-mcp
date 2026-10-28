@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
+import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -38,6 +39,22 @@ async function connectExtension(
   await ext.waitForWelcome();
   return ext;
 }
+
+describe("port binding", () => {
+  it("uses the next port when the requested one is taken and does not keep the failed listen", async () => {
+    const held = net.createServer();
+    await new Promise<void>((resolve) => {
+      held.listen(0, "127.0.0.1", () => resolve());
+    });
+    const taken = (held.address() as net.AddressInfo).port;
+    const moved = await createConnector({ port: taken, screenshotDir });
+    expect(moved.port).toBe(taken + 1);
+    expect(moved.server.listenerCount("listening")).toBeLessThanOrEqual(1);
+    expect(moved.server.listenerCount("error")).toBe(1);
+    await moved.close();
+    await new Promise<void>((resolve) => held.close(() => resolve()));
+  });
+});
 
 describe("extension handshake", () => {
   it("welcomes a connecting extension and reports it as connected", async () => {

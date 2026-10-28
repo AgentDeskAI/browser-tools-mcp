@@ -68,14 +68,21 @@ function portOf(server: net.Server): number {
 function listenOn(port: number): Promise<net.Server> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
-    const onError = (error: Error) => {
-      server.close(() => reject(error));
+    let settled = false;
+    const finish = (error?: Error, listening = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error && listening) {
+        server.removeAllListeners("error");
+        resolve(server);
+        return;
+      }
+      server.close(() => reject(error ?? new Error(`Timed out listening on ${port}`)));
     };
-    server.once("error", onError);
-    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
-      server.off("error", onError);
-      resolve(server);
-    });
+    const timer = setTimeout(() => finish(new Error(`Timed out listening on ${port}`)), 1_000);
+    server.once("error", (error) => finish(error));
+    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => finish(undefined, true));
   });
 }
 

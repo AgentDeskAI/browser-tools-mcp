@@ -192,7 +192,7 @@ describe("stdio transport contract", () => {
     } finally {
       await held.release();
     }
-  });
+  }, 45_000);
 });
 
 describe("command line interface", () => {

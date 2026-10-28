@@ -2077,7 +2077,13 @@ function parseList(value: unknown): string[] | undefined {
   return undefined;
 }
 
-/** Binds the requested port, walking forward if it is taken. */
+/**
+ * Binds the requested port, walking forward if it is taken.
+ *
+ * A failed listen used to call listen() again without closing. Each failure
+ * left its listening callback attached, and on macOS that stack could sit
+ * there until the caller timed out.
+ */
 function listen(
   server: http.Server,
   host: string,
@@ -2090,21 +2096,25 @@ function listen(
 
     const tryListen = () => {
       const onError = (error: NodeJS.ErrnoException) => {
+        server.removeListener("listening", onListening);
         if (error.code === "EADDRINUSE" && remaining > 1 && startPort !== 0) {
           remaining -= 1;
           port += 1;
-          setImmediate(tryListen);
+          server.close(() => tryListen());
           return;
         }
         reject(error);
       };
 
-      server.once("error", onError);
-      server.listen(port, host, () => {
-        server.off("error", onError);
+      const onListening = () => {
+        server.removeListener("error", onError);
         const address = server.address();
         resolve(typeof address === "object" && address ? address.port : port);
-      });
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, host);
     };
 
     tryListen();
