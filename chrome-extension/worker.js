@@ -6,8 +6,9 @@
  * moment via chrome.tabs.get. Tab list, read, background navigate, and soft
  * input go through BTMCP_TABS. Those paths do not call the debugger API and do
  * not activate a tab or focus a window. DevTools capture stays in devtools.js.
+ * The 8-hour log is opt-in and uses page hooks, not the debugger.
  */
-importScripts("shared.js", "gates.js", "tab-safety.js", "tab-page.js", "tab-actions.js");
+importScripts("shared.js", "gates.js", "tab-safety.js", "tab-page.js", "tab-actions.js", "timeline.js");
 
 BTMCP_SAFETY.install(api);
 
@@ -54,6 +55,110 @@ function sendOn(ws, message) {
 
 function send(message) {
   return sendOn(socket, message);
+}
+
+var timelineQueue = [];
+var timelineInjected = {};
+
+function storageSet(area, value) {
+  return new Promise(function (resolve) {
+    try {
+      area.set(value, function () {
+        resolve();
+      });
+    } catch (error) {
+      resolve();
+    }
+  });
+}
+
+async function readTimelineState() {
+  var local = await storageGet(api.storage.local, [BTMCP_TIMELINE.STORAGE_KEY]);
+  return BTMCP_TIMELINE.normalizeState(local[BTMCP_TIMELINE.STORAGE_KEY]);
+}
+
+async function writeTimelineState(state) {
+  var next = {};
+  next[BTMCP_TIMELINE.STORAGE_KEY] = state;
+  await storageSet(api.storage.local, next);
+}
+
+function flushTimelineQueue(ws) {
+  var target = ws || socket;
+  while (timelineQueue.length) {
+    if (!sendOn(target, { type: "timeline-event", event: timelineQueue[0] })) return;
+    timelineQueue.shift();
+  }
+}
+
+function enqueueTimeline(event) {
+  timelineQueue.push(event);
+  if (timelineQueue.length > 200) timelineQueue.shift();
+  flushTimelineQueue(socket);
+}
+
+async function injectTimeline(tabId) {
+  return BTMCP_TIMELINE.inject(api, tabId);
+}
+
+/**
+ * Tells the connector what the user enabled, and hooks only those tabs.
+ * The hook is console and fetch/XHR. It does not attach the debugger.
+ */
+async function syncTimeline(ws) {
+  var state = await readTimelineState();
+  var tabs = [];
+  try {
+    tabs = await api.tabs.query({});
+  } catch (error) {
+    tabs = [];
+  }
+  var changed = false;
+  for (var i = 0; i < tabs.length; i++) {
+    var tab = tabs[i];
+    if (!tab || typeof tab.id !== "number" || !state.tabs[String(tab.id)]) continue;
+    var origin = BTMCP_GATES.originOf(tab.url || "") || "";
+    var stored = state.tabs[String(tab.id)];
+    var url = tab.url || "";
+    var title = tab.title || "";
+    if (stored.url !== url || stored.title !== title || stored.origin !== origin) {
+      stored.url = url;
+      stored.title = title;
+      stored.origin = origin;
+      changed = true;
+    }
+  }
+  if (changed) await writeTimelineState(state);
+  sendOn(ws || socket, { type: "timeline-targets", targets: BTMCP_TIMELINE.targetsFromState(state) });
+  flushTimelineQueue(ws || socket);
+  for (var j = 0; j < tabs.length; j++) {
+    var open = tabs[j];
+    if (!open || typeof open.id !== "number") continue;
+    if (!BTMCP_TIMELINE.isTracked(open, state)) continue;
+    if (open.discarded) continue;
+    if (timelineInjected[open.id]) continue;
+    if (await injectTimeline(open.id)) timelineInjected[open.id] = true;
+  }
+}
+
+async function handleTimelineCapture(entry, tab) {
+  var state = await readTimelineState();
+  if (!BTMCP_TIMELINE.isTracked(tab, state)) return;
+  var prepared = BTMCP_TIMELINE.prepareEvent(entry, tab);
+  if (!prepared) return;
+  enqueueTimeline(prepared);
+}
+
+async function forgetTimelineTab(tabId) {
+  var state = await readTimelineState();
+  if (!state.tabs[String(tabId)]) {
+    delete timelineInjected[tabId];
+    return;
+  }
+  delete state.tabs[String(tabId)];
+  delete timelineInjected[tabId];
+  await writeTimelineState(state);
+  await syncTimeline(socket);
 }
 
 async function reportState() {
@@ -131,6 +236,7 @@ async function ensureConnected() {
           excludeOrigins: state.excludeOrigins,
         });
       });
+      void syncTimeline(ws);
     };
 
     ws.onmessage = function (event) {
@@ -219,18 +325,39 @@ async function answerProbe(message, reply) {
 
 if (api.storage && api.storage.onChanged) {
   api.storage.onChanged.addListener(function (changes, area) {
-    var watched =
+    var capabilityChanged =
       (area === "session" &&
         (changes[BTMCP_GATES.POPUP_SWITCH_KEY] || changes[BTMCP_GATES.PANEL_SWITCH_KEY])) ||
       (area === "local" && changes[BTMCP_GATES.EXCLUDE_KEY]);
-    if (!watched) return;
-    void ensureConnected().then(reportState);
+    var timelineChanged = area === "local" && changes[BTMCP_TIMELINE.STORAGE_KEY];
+    if (!capabilityChanged && !timelineChanged) return;
+    void ensureConnected().then(function () {
+      if (capabilityChanged) return reportState();
+    }).then(function () {
+      if (timelineChanged) return syncTimeline(socket);
+    });
   });
 }
 
 if (api.runtime && api.runtime.onMessage) {
-  api.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
-    if (!message || message.type !== "capability-report") return;
+  api.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (!message) return;
+    if (message.type === "timeline-capture") {
+      if (sender && sender.id && api.runtime.id && sender.id !== api.runtime.id) return;
+      void handleTimelineCapture(message.entry, sender && sender.tab);
+      return;
+    }
+    if (message.type === "timeline-sync") {
+      void ensureConnected()
+        .then(function () {
+          return syncTimeline(socket);
+        })
+        .then(function () {
+          sendResponse({ ok: true });
+        });
+      return true;
+    }
+    if (message.type !== "capability-report") return;
     void ensureConnected().then(reportState).then(function () {
       sendResponse({ ok: true });
     });
@@ -238,11 +365,29 @@ if (api.runtime && api.runtime.onMessage) {
   });
 }
 
+if (api.tabs && api.tabs.onUpdated) {
+  api.tabs.onUpdated.addListener(function (tabId, info) {
+    if (!info || info.status !== "complete") return;
+    delete timelineInjected[tabId];
+    void syncTimeline(socket);
+  });
+}
+
+if (api.tabs && api.tabs.onRemoved) {
+  api.tabs.onRemoved.addListener(function (tabId) {
+    void forgetTimelineTab(tabId);
+  });
+}
+
 if (api.alarms) {
   try {
     api.alarms.create("btmcp-capability", { periodInMinutes: 1 });
     api.alarms.onAlarm.addListener(function (alarm) {
-      if (alarm && alarm.name === "btmcp-capability") void ensureConnected();
+      if (alarm && alarm.name === "btmcp-capability") {
+        void ensureConnected().then(function () {
+          return syncTimeline(socket);
+        });
+      }
     });
   } catch (error) {
     /* alarms are a reconnect aid; the gate stays off without them */

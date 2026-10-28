@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Opt-in 8-hour tab timeline.** Recording stays off until the user enables a
+  tab or an origin in the extension popup. `listTracked` lists what is on.
+  `getTimeline` returns redacted console and network for one tab or origin
+  between `from` and `to`, or for `lastMinutes`. The log is local, kept for a
+  rolling 8 hours, then dropped. Cookie and Authorization values are removed
+  before storage. A tab that was never enabled, or a time outside the window,
+  comes back empty. The capture wraps console and fetch/XHR. It does not
+  attach the debugger and does not hide the debugging banner.
 - **Non-scriptable pages are reported the same way everywhere.** `chrome://`,
   DevTools, `view-source:`, the Chrome Web Store, extension pages, and the
   built-in PDF viewer come back as metadata only (`access: "metadata-only"`,

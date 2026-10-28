@@ -24,6 +24,7 @@ import type {
   ChromeTabRead,
   SoftInputResult,
 } from "../tabs/contract.js";
+import type { TimelineListing, TimelineQuery, TimelineResult } from "../timeline/store.js";
 
 export interface PageInfo {
   url: string;
@@ -111,6 +112,8 @@ export interface ConnectorClient {
   exportConsole(options?: { tabId?: TabId; allTabs?: boolean }): Promise<ExportResult<ConsoleEntry>>;
   exportNetwork(options?: { tabId?: TabId; allTabs?: boolean }): Promise<ExportResult<NetworkEntry>>;
   readArtifact(kind: "screenshot" | "audit", name: string): Promise<Artifact>;
+  listTracked(): Promise<TimelineListing>;
+  getTimeline(query: TimelineQuery): Promise<TimelineResult>;
 }
 
 /** Talks straight to an embedded connector — no network hop, no discovery. */
@@ -241,6 +244,14 @@ export class InProcessConnectorClient implements ConnectorClient {
 
   async readArtifact(kind: "screenshot" | "audit", name: string): Promise<Artifact> {
     return this.#connector.readArtifact(kind, name);
+  }
+
+  async listTracked(): Promise<TimelineListing> {
+    return this.#connector.listTracked();
+  }
+
+  async getTimeline(query: TimelineQuery): Promise<TimelineResult> {
+    return this.#connector.queryTimeline(query);
   }
 }
 
@@ -398,5 +409,13 @@ export class HttpConnectorClient implements ConnectorClient {
 
   readArtifact(kind: "screenshot" | "audit", name: string): Promise<Artifact> {
     return this.#request(`/api/artifact/${kind}/${encodeURIComponent(name)}`);
+  }
+
+  listTracked(): Promise<TimelineListing> {
+    return this.#request("/api/timeline");
+  }
+
+  getTimeline(query: TimelineQuery): Promise<TimelineResult> {
+    return this.#request("/api/timeline/logs", { query: query as Record<string, unknown> });
   }
 }

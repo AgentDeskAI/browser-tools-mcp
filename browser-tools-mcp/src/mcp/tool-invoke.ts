@@ -9,6 +9,7 @@ import {
 import type { AuditCategory } from "../lighthouse/types.js";
 import { RestrictedPageError, restrictedPageToolText } from "../restricted-page.js";
 import { invokeTabTool } from "../tabs/tools.js";
+import { invokeTimelineTool } from "../timeline/tools.js";
 
 export type ToolContent =
   | { type: "text"; text: string }
@@ -127,6 +128,8 @@ export async function invokeTool(
 ): Promise<ToolResult> {
   const tabTool = await invokeTabTool(name, client, args);
   if (tabTool) return tabTool;
+  const timelineTool = await invokeTimelineTool(name, client, args);
+  if (timelineTool) return timelineTool;
 
   switch (name) {
     case "listBrowserTabs":
@@ -339,6 +342,8 @@ export const INVOKABLE_TOOL_NAMES: readonly string[] = [
   "navigateBrowser",
   "getBrowserStorage",
   "wipeLogs",
+  "listTracked",
+  "getTimeline",
   "runAccessibilityAudit",
   "runPerformanceAudit",
   "runSEOAudit",

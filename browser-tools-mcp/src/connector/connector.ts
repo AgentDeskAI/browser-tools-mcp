@@ -16,6 +16,13 @@ import {
   type TabId,
 } from "./store.js";
 import {
+  TimelineQueryError,
+  TimelineStore,
+  type TimelineListing,
+  type TimelineQuery,
+  type TimelineResult,
+} from "../timeline/store.js";
+import {
   bearerToken,
   extensionOriginAllowed,
   localOnlyGuard,
@@ -178,6 +185,11 @@ export interface ConnectorConfig {
   disabledTools?: string[];
   /** When set, only this extension (bare id or full origin) may pair. */
   extensionId?: string;
+  /**
+   * Directory for the opt-in 8-hour log. Omit in tests to keep it in memory.
+   * The running connector passes the local state directory.
+   */
+  timelineDir?: string;
 }
 
 export interface TabView {
@@ -284,6 +296,10 @@ export interface Connector {
     text: string;
     submit?: boolean;
   }): Promise<SoftInputResult>;
+  /** Tabs and origins the user has enabled for the 8-hour log. */
+  listTracked(): TimelineListing;
+  /** Redacted console and network for one tab or origin. Empty when untracked or outside the window. */
+  queryTimeline(query: TimelineQuery): TimelineResult;
   close(): Promise<void>;
 }
 
@@ -349,6 +365,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
   const requestTimeoutMs = config.requestTimeoutMs ?? 10_000;
 
   const store = new TelemetryStore({ redact: config.redact !== false });
+  const timeline = new TimelineStore(config.timelineDir ? { dir: config.timelineDir } : {});
   const verbose = config.verbose === true;
 
   const inputOriginList = normalizeOriginList(config.allowInputOrigins);
@@ -555,6 +572,30 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       connectedTabs: tabs.size,
       ...restrictedPageFields(url),
     });
+  });
+
+  api.get("/timeline", (_req, res) => {
+    res.json(timeline.list());
+  });
+
+  api.get("/timeline/logs", (req: Request, res: Response) => {
+    try {
+      const chromeTabId = parseCount(req.query["chromeTabId"]);
+      const lastMinutes = parseCount(req.query["lastMinutes"]);
+      const limit = parseCount(req.query["limit"]);
+      res.json(
+        timeline.query({
+          ...(chromeTabId !== undefined ? { chromeTabId } : {}),
+          ...(typeof req.query["origin"] === "string" ? { origin: req.query["origin"] } : {}),
+          ...(typeof req.query["from"] === "string" ? { from: req.query["from"] } : {}),
+          ...(typeof req.query["to"] === "string" ? { to: req.query["to"] } : {}),
+          ...(lastMinutes !== undefined ? { lastMinutes } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        })
+      );
+    } catch (error) {
+      respondWithError(res, error);
+    }
   });
 
   api.get("/status", (_req, res) => {
@@ -1219,6 +1260,14 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
       case "settings":
         store.updateSettings(message["settings"]);
         break;
+      case "timeline-targets":
+        if (connection.role !== "worker" || !connection.fromExtension) break;
+        timeline.replaceTargets(message["targets"]);
+        break;
+      case "timeline-event":
+        if (connection.role !== "worker" || !connection.fromExtension) break;
+        timeline.ingest(message["event"]);
+        break;
       case "screenshot-result":
       case "refresh-result":
       case "navigate-result":
@@ -1823,6 +1872,7 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
 
   async function close(): Promise<void> {
     clearInterval(heartbeat);
+    timeline.flush();
     for (const { timer, reject } of pending.values()) {
       clearTimeout(timer);
       reject(new Error("Connector shutting down"));
@@ -1877,6 +1927,8 @@ export async function createConnector(config: ConnectorConfig = {}): Promise<Con
     softTypeChromeTab,
     readStorage,
     runAudit,
+    listTracked: () => timeline.list(),
+    queryTimeline: (query) => timeline.query(query),
     close,
   };
 }
@@ -1910,6 +1962,10 @@ function respondWithError(res: Response, error: unknown): void {
   }
   if (error instanceof ExtensionRequestError) {
     res.status(502).json({ error: error.message, code: "EXTENSION_ERROR" });
+    return;
+  }
+  if (error instanceof TimelineQueryError) {
+    res.status(400).json({ error: error.message, code: "BAD_TIMELINE_QUERY" });
     return;
   }
   log.error("Unexpected error:", error);

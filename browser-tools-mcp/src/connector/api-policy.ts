@@ -52,6 +52,8 @@ export const API_TOOL_NAMES: readonly string[] = [
   "navigateBrowser",
   "getBrowserStorage",
   "wipeLogs",
+  "listTracked",
+  "getTimeline",
   ...AUDIT_CATEGORIES.map((category) => AUDIT_TOOL[category]),
 ];
 
@@ -112,6 +114,8 @@ function toolsForRequest(method: string, path: string, query: Record<string, unk
   if (method === "POST" && path === "/navigate") return ["navigateBrowser"];
   if (method === "POST" && path === "/storage") return ["getBrowserStorage"];
   if (method === "POST" && path === "/wipe") return ["wipeLogs"];
+  if (method === "GET" && path === "/timeline") return ["listTracked"];
+  if (method === "GET" && path === "/timeline/logs") return ["getTimeline"];
   if (method === "GET" && path === "/export/console") return ["getConsoleLogs", "getConsoleErrors"];
   if (method === "GET" && path === "/export/network") return ["getNetworkLogs", "getNetworkErrors"];
 

@@ -107,6 +107,8 @@ setup and a silent one look the same.
 | `takeScreenshot` | Screenshot returned **as an image**, plus its file path |
 | `refreshBrowser` | Reloads the inspected tab |
 | `getBrowserStorage` | localStorage, sessionStorage and cookies (values gated) |
+| `listTracked` | Tabs and origins the user enabled for the 8-hour log |
+| `getTimeline` | Redacted console and network for one tab or origin, by time |
 | `wipeLogs` | Clears captured telemetry before a clean reproduction |
 | `runAccessibilityAudit` | Lighthouse accessibility audit |
 | `runPerformanceAudit` | Lighthouse performance audit with Core Web Vitals |
@@ -130,6 +132,14 @@ clients can auto-approve them safely.
 `listTabs` reports the tabs `chrome.tabs` returns in the windows it returns. Other Arc Spaces, Little Arc, pinned favorites, split-view partners, and slept tabs may be missing. Incognito is skipped. This is not every open tab. Background navigation stays in the visible window until that is measured on Arc.
 
 The popup switch has to be on. Navigation and soft input also need `--allow-input` on `browser-tools-mcp`, or `--allow-actions` on the `browser-tools` CLI. The same origin rules as other input apply. An asleep tab is reported and not reloaded. A soft action says `worked` or `needs a real gesture` and does not claim a failed action worked.
+
+### 8-hour log
+
+Recording is off until the user turns it on for a tab or a site in the extension popup. `listTracked` shows what is on. `getTimeline` reads redacted console and network for one `chromeTabId` or origin, using `from` and `to` or `lastMinutes`.
+
+The log stays on this machine for a rolling 8 hours, then it is dropped. Cookie and Authorization values are removed before they are stored. If that tab or origin was never enabled, or the time is outside the window, the result is empty. It does not guess from the DevTools buffer.
+
+This path wraps the page's console and fetch/XHR. It does not attach the debugger, so it does not show or hide the debugging banner, and it does not click or drive the page. `wipeLogs` clears the DevTools buffer only.
 
 ### Several tabs at once
 

@@ -132,6 +132,13 @@ be, both are worth reporting.
   `tabs.update({active:true})`, or `windows.update({focused:true})`. When a
   feature attaches the debugger, the banner stays visible for that attachment,
   and dismissing it stops the attachment.
+- The 8-hour tab log is off until the user enables a tab or an origin in the
+  extension popup. It is stored only in the local state directory
+  (`timeline.json`, mode `0600`), kept for a rolling 8 hours, then deleted.
+  Cookie, Set-Cookie, and Authorization values are removed before storage.
+  Capture uses page hooks, not `chrome.debugger`, so it does not hide the
+  debugging banner. A query for a target that was never enabled, or a time
+  outside that window, returns an empty result.
 - Credential-bearing headers and secret-shaped strings are redacted before
   storage, not before display.
 - Request bodies are size-limited; log retention is bounded and client-supplied
