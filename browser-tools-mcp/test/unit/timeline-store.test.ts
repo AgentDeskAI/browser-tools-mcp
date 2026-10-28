@@ -247,7 +247,15 @@ describe("TimelineStore", () => {
     const raw = fs.readFileSync(file, "utf8");
     expect(raw).not.toContain(SECRET);
     expect(raw).toContain("application/json");
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // POSIX stores the log as mode 0600. Windows does not keep owner/group/other
+    // bits: Node reports 0666 for a writable file, and chmod only toggles the
+    // write bit, which 0600 leaves set. Same rule as the session file.
+    const mode = fs.statSync(file).mode & 0o777;
+    if (process.platform === "win32") {
+      expect(mode & 0o200).toBe(0o200);
+    } else {
+      expect(mode).toBe(0o600);
+    }
 
     const restored = new TimelineStore({ dir, now: () => NOW });
     expect(restored.query({ chromeTabId: 4 }).network).toHaveLength(1);
